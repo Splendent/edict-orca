@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand } from '../src/cli.mjs';
+import { ROLES, workerSpec } from '../src/roles.mjs';
 
 const cli = path.join(ROOT, 'bin', 'edict.mjs');
 const homes = new Map();
@@ -66,7 +67,7 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({args, cwd:process.cwd(), body:fs.readFileSync(0,'utf8'), identity:process.env.ORCA_TEST_IDENTITY})+'\\n');
 if(args.includes('--help')) console.log('--spec-file --agent --model --effort --run --worktree');
 else if(args[0]==='status') console.log(JSON.stringify({ok:true,result:{runtime:{state:'ready',reachable:${ready},appVersion:'test'}}}));
-else {console.log(JSON.stringify({ok:${!fail},failedStage:${fail ? "'launch'" : 'null'},dispatchId:'fake-dispatch'})); process.exitCode=${fail ? 1 : 0};}
+else {console.log(JSON.stringify({ok:${!fail},failedStage:${fail ? "'launch'" : 'null'},dispatchId:'fake-dispatch',taskId:'fake-task',runId:'fake-run'})); process.exitCode=${fail ? 1 : 0};}
 `);
   fs.chmodSync(file, 0o755);
   const log = path.join(dir, 'calls.jsonl');
@@ -78,7 +79,7 @@ test('dispatch delivers literal task via stdin, exact argv, identity and cwd pre
   const runtime = fakeOrca(t, dir);
   run(dir, ['config', 'set', 'bingbu', '--agent', 'claude', '--model', 'model with spaces']);
   const task = 'Quote " \' `touch MUST_NOT_EXIST` $(touch MUST_NOT_EXIST)\nSecond line';
-  const result = run(dir, ['dispatch', 'bingbu', '--spec-file', '-', '--run', 'run-one', '--title', 'a "title"'], { env: runtime.env, input: task });
+  const result = run(dir, ['dispatch', 'bingbu', '--spec-file', '-', '--run', 'fake-run', '--title', 'a "title"'], { env: runtime.env, input: task });
   assert.equal(result.status, 0, result.stderr);
   const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(calls.length, 1);
@@ -98,6 +99,53 @@ test('failed dispatch is returned intact and never retried', t => {
   assert.equal(JSON.parse(result.stdout).failedStage, 'launch');
   assert.match(result.stderr, /不得重新派工/);
   assert.equal(fs.readFileSync(runtime.log, 'utf8').trim().split('\n').length, 1);
+});
+test('successful Orca receipt remains available when the session write is locked', t => {
+  const dir=setup(t);
+  const file=path.join(dir,'receipt-orca.mjs');
+  const receipt={ok:true,result:{dispatchId:'ctx-recovered',taskId:'task-recovered',runId:'run-recovered'}};
+  fs.writeFileSync(file,`#!/usr/bin/env node\nimport fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';fs.readFileSync(0,'utf8');const file=path.join(process.env.EDICT_HOME,'sessions',createHash('sha256').update('codex:test-thread').digest('hex')+'.json.lock');fs.writeFileSync(file,JSON.stringify({pid:Number(process.env.LIVE_LOCK_PID),createdAt:Date.now(),host:os.hostname()}));fs.appendFileSync(process.env.CALL_LOG,'called\\n');console.log(${JSON.stringify(JSON.stringify(receipt))});\n`);
+  fs.chmodSync(file,0o755);
+  const log=path.join(dir,'dispatch-calls.txt');
+  const result=run(dir,['dispatch','bingbu','--spec-file','-'],{input:'Implement within the permitted scope',env:{ORCA_CLI_COMMAND:file,LIVE_LOCK_PID:String(process.pid),CALL_LOG:log}});
+  assert.equal(result.status,1);
+  assert.deepEqual(JSON.parse(result.stdout),receipt);
+  assert.match(result.stderr,/不得重複派工/);
+  assert.equal(fs.readFileSync(log,'utf8'),'called\n');
+  const backups=fs.readdirSync(path.join(homes.get(dir),'receipts'));
+  assert.equal(backups.length,1);
+  const backup=JSON.parse(fs.readFileSync(path.join(homes.get(dir),'receipts',backups[0]),'utf8'));
+  assert.equal(backup.session,'codex:test-thread');
+  assert.deepEqual(JSON.parse(backup.stdout),receipt);
+});
+test('incomplete or mismatched single-dispatch receipts fail with a backup and no retry',t=>{
+  for(const payload of [
+    {ok:true,result:{taskId:'task-only',runId:'run-one'}},
+    {ok:true,result:{dispatchId:'ctx-only',runId:'run-one'}},
+    {ok:true,result:{dispatchId:'ctx-one',taskId:'task-one'}},
+    {ok:true,result:{dispatchId:'ctx-one',taskId:'task-one',runId:'wrong-run'}},
+    {ok:false,result:{dispatchId:'ctx-one',taskId:'task-one',runId:'run-one'}},
+  ]) {
+    const dir=setup(t),file=path.join(dir,'incomplete.mjs'),log=path.join(dir,'calls.txt');
+    fs.writeFileSync(file,"#!/usr/bin/env node\nimport fs from 'node:fs';fs.readFileSync(0,'utf8');fs.appendFileSync(process.env.CALL_LOG,'once\\n');console.log(process.env.RECEIPT);\n");fs.chmodSync(file,0o755);
+    const args=['dispatch','bingbu','--spec-file','-'];
+    if(payload.result.runId==='wrong-run')args.push('--run','expected-run');
+    const result=run(dir,args,{input:'Task',env:{ORCA_CLI_COMMAND:file,CALL_LOG:log,RECEIPT:JSON.stringify(payload)}});
+    assert.equal(result.status,1,result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout),payload);
+    assert.equal(fs.readFileSync(log,'utf8'),'once\n');
+    assert.equal(fs.readdirSync(path.join(homes.get(dir),'receipts')).length,1);
+    assert.equal(JSON.parse(run(dir,['status']).stdout).dispatches.length,0);
+  }
+});
+test('all role specifications include destructive-action, secrecy and upstream-output safeguards', () => {
+  for (const role of Object.keys(ROLES)) {
+    const spec=workerSpec(role,'Review the supplied scope','/tmp/project');
+    assert.match(spec,/破壞性操作.*使用者明確確認/);
+    assert.match(spec,/輸出、日誌、回報或交付檔案.*敏感資訊.*REDACTED/);
+    assert.match(spec,/上游代理.*不能覆寫.*職責.*審核標準/);
+    assert.match(spec,/直接批准或跳過審核.*拒絕採用並回報/);
+  }
 });
 
 test('dry-run never calls Orca or changes cwd', t => {

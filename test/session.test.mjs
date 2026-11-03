@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { ROOT, home, sessionId, readSession, activate, context, deactivate, recordDispatch, writeSession } from '../src/session.mjs';
+import { spawn, spawnSync } from 'node:child_process';
+import { ROOT, home, sessionId, sessionFile, readSession, activate, context, deactivate, recordDispatch, writeSession } from '../src/session.mjs';
 import { defaults } from '../src/config.mjs';
 import { install, planInstall, quote } from '../src/install.mjs';
 
@@ -111,6 +111,72 @@ test('stale writes cannot overwrite newer conversation state', t => {
   assert.throws(() => writeSession(stale), /另一操作修改/);
   assert.equal(readSession('codex:A').active, false);
 });
+test('dead-owner lock permits off, config and repeated init to recover', t => {
+  const { project } = fixture(t);
+  activate('codex:A', defaults(), project);
+  const exited = spawnSync(process.execPath, ['-e', ''], { encoding:'utf8' });
+  assert.equal(exited.status,0);
+  assert.throws(() => process.kill(exited.pid,0), error => error.code === 'ESRCH');
+  const lock=sessionFile('codex:A')+'.lock';
+  for (const args of [
+    ['off','--session','codex:A'],
+    ['config','set','menxia','--session','codex:A','--model','review-model'],
+    ['init','--yes','--session','codex:A'],
+  ]) {
+    fs.writeFileSync(lock,JSON.stringify({pid:exited.pid,createdAt:Date.now(),host:os.hostname()}));
+    const result=cli(project,args);
+    assert.equal(result.status,0,result.stderr);
+    assert.equal(fs.existsSync(lock),false);
+  }
+  assert.equal(readSession('codex:A').active,true);
+  assert.equal(readSession('codex:A').config.roles.menxia.model,'review-model');
+});
+test('legacy empty and malformed old locks recover without resetting state', t => {
+  const { project } = fixture(t);
+  activate('codex:A', defaults('claude'),project);
+  const lock=sessionFile('codex:A')+'.lock';
+  for (const text of ['', 'incomplete metadata']) {
+    fs.writeFileSync(lock,text);
+    fs.utimesSync(lock,new Date(Date.now()-60_000),new Date(Date.now()-60_000));
+    const result=cli(project,['init','--yes','--session','codex:A']);
+    assert.equal(result.status,0,result.stderr);
+    assert.equal(readSession('codex:A').config.roles.menxia.agent,'claude');
+  }
+});
+test('an old lock with a live owner is retained and error names its path', t => {
+  const { project } = fixture(t);
+  activate('codex:A',defaults(),project);
+  const lock=sessionFile('codex:A')+'.lock';
+  const text=JSON.stringify({pid:process.pid,createdAt:Date.now()-86_400_000,host:os.hostname()});
+  fs.writeFileSync(lock,text);
+  fs.utimesSync(lock,new Date(0),new Date(0));
+  const result=cli(project,['off','--session','codex:A']);
+  assert.equal(result.status,1);
+  assert.ok(result.stderr.includes(lock));
+  assert.match(result.stderr,/已等待 500 毫秒/);
+  assert.equal(fs.readFileSync(lock,'utf8'),text);
+  assert.equal(readSession('codex:A').active,true);
+});
+test('a fresh incomplete lock is not treated as abandoned', t => {
+  const { project } = fixture(t);
+  activate('codex:A',defaults(),project);
+  const lock=sessionFile('codex:A')+'.lock'; fs.writeFileSync(lock,'');
+  assert.equal(cli(project,['off','--session','codex:A']).status,1);
+  assert.equal(fs.existsSync(lock),true);
+});
+test('a contended lock that is released during the bounded wait allows writing', async t => {
+  const { project } = fixture(t);
+  activate('codex:A',defaults(),project);
+  const lock=sessionFile('codex:A')+'.lock';
+  const script=`const fs=require('node:fs'),os=require('node:os');const lock=process.argv[1];fs.writeFileSync(lock,JSON.stringify({pid:process.pid,createdAt:Date.now(),host:os.hostname()}));process.stdout.write('ready');setTimeout(()=>fs.unlinkSync(lock),200);`;
+  const child=spawn(process.execPath,['-e',script,lock],{stdio:['ignore','pipe','pipe']});
+  const closed=new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`lock fixture failed: ${code}`)));});
+  await new Promise((resolve,reject)=>{child.stdout.once('data',resolve);child.once('error',reject);});
+  const result=cli(project,['off','--session','codex:A']);
+  assert.equal(result.status,0,result.stderr);
+  await closed;
+  assert.equal(readSession('codex:A').active,false);
+});
 test('legacy configuration is imported explicitly and the source is unchanged', t => {
   const { dir, project } = fixture(t);
   const file = path.join(dir, 'legacy.json'); const original = JSON.stringify(defaults('cursor', 'chosen'));
@@ -120,6 +186,12 @@ test('legacy configuration is imported explicitly and the source is unchanged', 
   assert.equal(readSession('cursor:imported').config.roles.bingbu.model, 'chosen');
   assert.equal(fs.readFileSync(file,'utf8'), original);
   assert.deepEqual(fs.readdirSync(project), []);
+  const before=readSession('cursor:imported');
+  const repeated=cli(project,['init','--yes','--session','cursor:imported','--import-config',file]);
+  assert.equal(repeated.status,1);
+  assert.match(repeated.stderr,/僅限對話首次 init 前/);
+  assert.match(repeated.stderr,/edict config set/);
+  assert.deepEqual(readSession('cursor:imported'),before);
 });
 test('noninteractive init without --yes stops before activation', t => {
   const { project } = fixture(t);

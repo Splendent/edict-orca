@@ -5,8 +5,9 @@ import { parseArgs } from 'node:util';
 import { ROLES, workerSpec } from './roles.mjs';
 import { defaults, validateConfig } from './config.mjs';
 import { configure } from './configure.mjs';
-import { dispatchArgs, orcaCommand, runOrca, printResult } from './orca.mjs';
-import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch } from './session.mjs';
+import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult } from './orca.mjs';
+import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
+import { dispatchReady } from './schedule.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
 
 const HELP = `Edict：在目前對話手動啟用 Orca 協作
@@ -27,6 +28,10 @@ Codex 原生技能入口為 $edict init（其他子命令同理）。
   edict config [set <角色> --agent <claude|codex|cursor> --model <ID> --effort <值>] --session <ID>
   edict config set <角色> --clear-model|--clear-effort --session <ID>
   edict dispatch <角色> --spec-file <檔案|-> --session <ID> [--run <ID>] [--dry-run]
+  edict task-create <角色> --spec-file <檔案|-> --run <ID> [--deps <JSON陣列>] --session <ID>
+  edict dispatch <角色> --task <TaskID> --run <ID> --session <ID>
+  edict continue <DispatchID> --spec-file <檔案|-> --session <ID>
+  edict dispatch-ready --plan-file <派工JSON> --session <ID> [--concurrency 3] [--dry-run]
   edict doctor --session <ID>
   edict roles
 派工選項：--worktree current|<selector>|new-top-level、--repo、--name、--base-branch、--title
@@ -72,6 +77,8 @@ export async function main(argv) {
     agent: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     'clear-model': { type: 'boolean' }, 'clear-effort': { type: 'boolean' }, 'import-config': { type: 'string' },
     'spec-file': { type: 'string' }, 'dry-run': { type: 'boolean' }, run: { type: 'string' },
+    task: { type: 'string' }, deps: { type: 'string' }, parent: { type: 'string' },
+    'plan-file': { type: 'string' }, concurrency: { type: 'string' },
     worktree: { type: 'string' }, repo: { type: 'string' }, name: { type: 'string' },
     'base-branch': { type: 'string' }, title: { type: 'string' },
   } });
@@ -81,11 +88,14 @@ export async function main(argv) {
     init: ['yes', 'session', 'project', 'agent', 'model', 'effort', 'import-config', 'coordinator', 'mode-confirmed'],
     config: ['session', 'agent', 'model', 'effort', 'clear-model', 'clear-effort'],
     roles: [], status: ['session'], context: ['session'], off: ['session'], doctor: ['session'],
-    dispatch: ['session', 'spec-file', 'dry-run', 'run', 'worktree', 'repo', 'name', 'base-branch', 'title'],
+    dispatch: ['session', 'spec-file', 'task', 'dry-run', 'run', 'worktree', 'repo', 'name', 'base-branch', 'title'],
+    'task-create': ['session','spec-file','run','deps','parent','title','dry-run'],
+    continue: ['session','spec-file','title','dry-run'],
+    'dispatch-ready': ['session','plan-file','concurrency','dry-run'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
-  if (positionals.length > (command === 'config' ? 3 : command === 'dispatch' ? 2 : 1)) throw new Error('多餘的命令參數');
+  if (positionals.length > (command === 'config' ? 3 : ['dispatch','task-create','continue'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
   if (command === 'roles') { for (const [key, info] of Object.entries(ROLES)) console.log(`${key}\t${info.name}\t${info.duty}`); return 0; }
   const id = sessionId(options.session || (command === 'init' && !process.env.EDICT_SESSION_ID && !process.env.CODEX_THREAD_ID ? `conversation:${randomUUID()}` : undefined));
   if (command === 'context') { const text = context(id); if (text) console.log(text); return 0; }
@@ -101,7 +111,7 @@ export async function main(argv) {
     const previous = readSession(id);
     let imported;
     if (options['import-config']) {
-      if (previous) throw new Error('此對話已有設定；請用 config 修改，避免覆寫');
+      if (previous) throw new Error('匯入舊設定僅限對話首次 init 前；此對話已有設定。請用 edict config set <角色> --session <本對話ID> --agent <代理> --model <模型ID> 逐角色調整，避免覆寫');
       imported = validateConfig(JSON.parse(fs.readFileSync(options['import-config'], 'utf8')));
     }
     const project = path.resolve(options.project ?? previous?.project ?? process.cwd());
@@ -126,20 +136,57 @@ export async function main(argv) {
   }
   if (command === 'doctor') return doctor(id);
   const state = requireActive(id);
-  if (!options['spec-file']) throw new Error('派工必須指定 --spec-file <檔案|->');
-  const task = fs.readFileSync(options['spec-file'] === '-' ? 0 : options['spec-file'], 'utf8');
-  if (!task.trim()) throw new Error('任務內容不可空白');
-  const dispatchOptions = { ...options, run: options.run || state.runId || undefined };
-  const args = dispatchArgs(state.config, sub, dispatchOptions);
-  const spec = workerSpec(sub, task, state.project);
+  if (command === 'dispatch-ready') {
+    if (!options['plan-file']) throw new Error('須指定 --plan-file <派工JSON>');
+    const output=await dispatchReady(id,JSON.parse(fs.readFileSync(options['plan-file'],'utf8')),options.concurrency===undefined?3:Number(options.concurrency),options['dry-run']);
+    print(output);
+    return output.results?.some(row=>row.exitCode!==0)?1:0;
+  }
+  if (!!options.task === !!options['spec-file']) throw new Error('須擇一指定 --spec-file <檔案|-> 或 --task <TaskID>');
+  const task = options['spec-file'] ? fs.readFileSync(options['spec-file'] === '-' ? 0 : options['spec-file'], 'utf8') : null;
+  if (task!==null && !task.trim()) throw new Error('任務內容不可空白');
   const executable = orcaCommand();
+  if (command === 'task-create') {
+    const args=taskArgs(sub,options), spec=workerSpec(sub,task,state.project);
+    if (options['dry-run']) { print({executable,args,spec}); return 0; }
+    const result=runOrca(executable,args,{input:spec}), code=printResult(result);
+    if (code!==0) { console.error('建立 Task 未確認成功，保留原始回應，不得重複建立。'); return code; }
+    try { recordTask(id,JSON.parse(result.stdout),sub,options.run); }
+    catch(error) { return receiptFailure(id,sub,options.run,result.stdout,error); }
+    return 0;
+  }
+  if (command === 'continue') {
+    const original=state.dispatches.find(row=>row.dispatchId===sub);
+    if (!original?.runId) throw new Error('只能續辦本對話已保存且具有 Run ID 的 Dispatch');
+    const spec=workerSpec(original.role,task,state.project),args=continueArgs(original,spec,options.title);
+    if (options['dry-run']) { print({executable,args}); return 0; }
+    const result=runOrca(executable,args),code=printResult(result);
+    if (code!==0) { console.error('續辦未確認成功，保留原始回應，不得重送。'); return code; }
+    try { recordContinuation(id,JSON.parse(result.stdout),original); }
+    catch(error) { return receiptFailure(id,original.role,original.runId,result.stdout,error); }
+    return 0;
+  }
+  const dispatchOptions = { ...options, run: options.run || state.runId || undefined };
+  if (options.task) taskBinding(state,options.task,sub,dispatchOptions.run);
+  const args = dispatchArgs(state.config, sub, dispatchOptions);
+  const spec = options.task ? undefined : workerSpec(sub, task, state.project);
   if (options['dry-run']) { print({ executable, args, cwd: process.cwd(), spec }); return 0; }
   const result = runOrca(executable, args, { input: spec });
   const code = printResult(result);
   if (code !== 0) console.error('派工結果未確認或失敗；保留原始回應並讀 Orca recovery-and-cleanup 指南，不得重新派工。');
   else {
-    try { recordDispatch(id, JSON.parse(result.stdout), sub, dispatchOptions.run); }
-    catch (error) { console.error(`Orca 已回覆，但派工紀錄未保存：${error.message}。保留上方收據，不得重複派工。`); return 1; }
+    try {
+      const receipt=JSON.parse(result.stdout);
+      if (options.task && receipt.result?.taskId!==options.task) throw new Error('派工收據的 Task 與請求不符，結果未確認，不得重複派工');
+      recordDispatch(id, receipt, sub, dispatchOptions.run);
+    }
+    catch (error) { return receiptFailure(id,sub,dispatchOptions.run,result.stdout,error); }
   }
   return code;
+}
+function receiptFailure(id,role,run,stdout,error) {
+  console.error(`Orca 已回覆，但紀錄未保存：${error.message}。保留上方原始收據，不得重複派工。`);
+  try { console.error(`收據已另存：${saveDispatchReceipt(id,role,run,stdout)}。請協調者依收據核對 Orca 並補記紀錄。`); }
+  catch(backupError) { console.error(`收據備份也失敗：${backupError.message}。請保存 stdout 的原始 Orca 收據。`); }
+  return 1;
 }

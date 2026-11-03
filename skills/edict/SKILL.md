@@ -46,10 +46,10 @@ disable-model-invocation: true
 
 Cursor 官方說明這項模式適用 Agents Window 與 CLI。若當地 Orca 使用的 Cursor 版本或介面找不到 Use as Mode，保持 pending 並明列當地未支援／未驗證，不能把單則技能附加或讓使用者每次重打命令當成等價完成。此項要求不影響 Cursor 作為已派工作 worker。
 
-設定只存使用者的對話狀態目錄，不向工作專案寫入技能、AGENTS.md 或 config.json。舊版專案設定可在使用者要求時用 `init --yes --session <ID> --import-config <路徑>` 匯入；原檔保留不修改。
+設定只存使用者的對話狀態目錄，不向工作專案寫入技能、AGENTS.md 或 config.json。舊版專案設定僅能在本對話首次 init 前，依使用者要求用 `init --yes --session <ID> --import-config <路徑>` 匯入；原檔保留不修改。已有設定的對話改用 `edict config set <角色> --session <ID> ...` 逐角色調整，不能再次匯入覆寫。
 
 ### 啟用後
 
-這段對話後續的工作訊息，先用保留的識別碼讀 `context --session <ID>`，啟用時依 [協調流程](references/active.md) 工作；一般問答直接回答。每次不需要使用者重新輸入命令。off 後停止套用協作指令。未 init 的對話不會自行讀取、啟用或套用 Edict；不安裝 hook、全域常駐規則或輪詢程序。
+這段對話後續的工作訊息，先用保留的識別碼讀 `context --session <ID>`，啟用時依 [協調流程](references/active.md) 工作；一般問答直接回答。代理按 [相依派工工具](references/scheduling.md) 建立原生 Task、批次派出就緒工作、續辦同角色與增量彙整；使用者不需要新增手動命令。off 後停止套用協作指令。未 init 的對話不會自行讀取、啟用或套用 Edict；不安裝 hook、全域常駐規則或輪詢程序。
 
 本模式依賴代理遵守對話指令與摘要交接，無法從技能檔本身保證跨所有代理的壓縮／恢復行為。失去對話上下文時明確回報，不把狀態檔存在當作目前對話已啟用。

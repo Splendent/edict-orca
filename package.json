@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs"
+    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs && node --check src/orca.mjs && node --check src/schedule.mjs && node --check src/ranges.mjs"
   },
   "license": "MIT"
 }
