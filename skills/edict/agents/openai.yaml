@@ -1,0 +1,4 @@
+interface:
+  display_name: "Edict 三省六部"
+  short_description: "在目前 Orca 對話規劃、審核與派工，按角色指定代理和模型"
+  default_prompt: "使用 $edict 在目前 Orca 對話處理這個需求，依專案設定選擇各角色的代理與模型。"

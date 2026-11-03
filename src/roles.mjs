@@ -1,0 +1,33 @@
+// Adapted from cft0808/edict role descriptions; see NOTICE.md.
+export const ROLES = {
+  taizi: { name: '太子', duty: '整理需求、分辨問答與工作指令，將結果回報原對話。' },
+  zhongshu: { name: '中書省', duty: '唯讀規劃：列出目標、限制、子任務、負責角色、依賴、驗收方式；不得執行修改或自行派工。' },
+  menxia: { name: '門下省', duty: '獨立審查方案的可行性、完整性、風險與資源。明寫「通過」或「退回」、具體問題與驗收條件。不得因輪次耗盡強制通過，不修改實作、不自行派工。' },
+  shangshu: { name: '尚書省', duty: '依已通過方案產生派工表：角色、工作範圍、相依任務、工作樹需求、交付物及驗收。接收成果時核對完整性並彙整。僅提供派工建議，不自行啟動代理。' },
+  hubu: { name: '戶部', duty: '資料分析、統計、資源與成本核算，附資料來源、計算方法與限制。' },
+  libu: { name: '禮部', duty: '文件、規範、介面文案、使用者體驗與對外溝通草稿；外部傳送須有明確授權。' },
+  bingbu: { name: '兵部', duty: '工程實作、架構與功能開發，依任務範圍修改並提供驗證結果。' },
+  xingbu: { name: '刑部', duty: '獨立成果審查、測試驗收與合規。依實際檔案與測試證據判斷「通過」或「退回」，指出具體位置及原因。未驗證項目明列，不將作者自述當作驗收。' },
+  gongbu: { name: '工部', duty: '基礎設施、建置、CI/CD、部署與監控；部署或對外寫入沿用原對話授權。' },
+  libu_hr: { name: '吏部', duty: '代理設定、技能與權限配置；不讀取或回報憑證內容。' },
+  qintianjian: { name: '欽天監', duty: '效能度量、指標分析與趨勢預測；區分觀察與推論，提供量測證據。' },
+  zaochao: { name: '早朝官', duty: '按使用者要求蒐集新聞或研究簡報，附來源與日期；不自行建立排程或外部通知。' },
+};
+export const AGENTS = ['claude', 'codex', 'cursor'];
+
+export function workerSpec(role, task, project) {
+  if (!ROLES[role]) throw new Error(`未知角色：${role}`);
+  return `# Edict 任務：${ROLES[role].name} (${role})\n\n` +
+    `原專案位置：${project}\n實際操作目錄以 Orca 本次派工指定的工作樹為準；不得回原專案修改另一工作樹的檔案。\n\n` +
+    `## 職責\n${ROLES[role].duty}\n\n` +
+    `## 通訊與邊界\n` +
+    `- 你是 Orca worker，遵守 Orca 注入的 Task／Dispatch 身分、提問與 worker_done 指令。\n` +
+    `- 問題使用 Orca ask，完成後結束本輪等待回覆；不得輪詢信箱。\n` +
+    `- 完成時必須依派工前言送 worker_done；只輸出聊天文字不算完成回報。\n` +
+    `- 不自行啟動其他代理、建立新 Run、切換 Run 或向其他角色派工；由原對話協調者轉交。\n` +
+    `- 僅執行下列工作範圍，沿用專案規則與使用者授權；不自行 commit、push、發布或外部傳送。\n` +
+    `- 審查任務完成且結論為退回時，worker_done outcome 可為 succeeded（已完成審查），正文必須清楚標示退回。\n` +
+    `- 實作、測試或必要研究未完成時，回報未完成及阻礙，不將其標為成功。\n\n` +
+    `## 任務與驗收\n${task}\n\n` +
+    `## 回報內容\n結論、產出與檔案位置、實際驗證結果、未完成事項。輸出使用繁體中文，程式註解使用英文。\n`;
+}

@@ -1,0 +1,11 @@
+{
+  "name": "edict-orca",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Edict role workflow for existing Orca conversations",
+  "type": "module",
+  "bin": { "edict": "bin/edict.mjs" },
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test", "check": "node --check src/cli.mjs" },
+  "license": "MIT"
+}
