@@ -16,4 +16,8 @@
 
 - Cursor：https://cursor.com/docs/skills
 - Claude Code：https://code.claude.com/docs/en/skills
-- Codex：本次環境提供的 skill-creator 技能格式與 `.agents/skills` 既有共用位置。
+- Codex：https://learn.chatgpt.com/docs/build-skills
+
+技能的 `disable-model-invocation` 是 Claude／Cursor 的手動呼叫設定；Codex 另使用 agents/openai.yaml 的 allow_implicit_invocation=false。通用 SKILL.md 格式檢查器不接受此原生擴充欄位，因此須另核對官方欄位並以移除該欄位的暫存副本檢查其餘通用格式，不修改正式技能以迎合較窄的檢查器。
+
+本套件不註冊代理 hook；對話模式透過手動技能指令與明確的對話識別碼延續。

@@ -1,10 +1,12 @@
 # Edict for Orca
 
-在現有 Orca 對話使用三省六部的規劃、審核、派工與驗收流程。Claude、Codex、Cursor 可按角色指定模型。Node.js 20 以上，沒有 npm 執行依賴。
+在目前對話執行一次 `/edict init`，完成角色與模型設定後，正常交代工作。這段對話依 Edict 規劃、獨立審核、派工與驗收；一般問答直接回答。其他對話預設未啟用。套件不安裝 hook、常駐規則或輪詢程序。
 
-## 在其他電腦安裝
+Claude Code、Cursor 使用 `/edict init`；Codex 原生技能入口是 `$edict init`。Cursor 的初次設定包含將 Edict 選為此對話的 Custom Mode，見下節。不宣稱能替 Codex CLI 新增任意原生斜線命令。
 
-前置條件：Node.js 20 以上、Git、已登入且可用的 Orca，以及所選代理的登入狀態。私人儲存庫需要有權限的 GitHub 帳號；以下使用已登入的 GitHub CLI。
+## 安裝
+
+需要 Node.js 20 以上、Git、可用的 Orca 與已登入代理，以及有儲存庫權限的 GitHub 帳號。每台電腦安裝一次：
 
 ```sh
 gh repo clone Splendent/edict-orca
@@ -12,77 +14,72 @@ cd edict-orca
 node scripts/install-local.mjs
 ```
 
-安裝器將 `edict` 放在目前使用者的 `~/.local/bin`，若該目錄尚未加入 PATH，會顯示需要加入的目錄。每台電腦各安裝一次；不會同步或複製帳號憑證。
+安裝器建立使用者層級命令與共用手動技能，連結到各代理技能目錄，不啟用對話，也不修改代理 settings、hook 或工作專案。可用 `--dry-run` 查看變動。若 ~/.local/bin 不在 PATH，先加入該目錄；也可用 `node <儲存庫路徑>/bin/edict.mjs`。
 
-Windows 安裝器產生 `edict.cmd`，PowerShell 使用 `edict.cmd init`；Windows 及 Linux 的實際執行尚未驗證。也可直接使用 `node <儲存庫路徑>/bin/edict.mjs init`，不依賴 PATH。
+既有對話未發現新技能時，可直接請代理讀取安裝位置的 SKILL.md，不必改工作專案。
 
-## 初始化專案
+## 對話命令
 
-在要使用 Edict 的專案根目錄執行：
+| 命令 | 用途 |
+| --- | --- |
+| `/edict init` | 設定並啟用目前對話，接下來正常交代工作 |
+| `/edict status` | 查看本對話開關、角色模型及 Orca 派工紀錄 |
+| `/edict config` | 調整本對話角色設定，只影響之後啟動的 worker |
+| `/edict off` | 停用本對話，保留紀錄；不取消已派工作 |
+| `/edict help` | 顯示用法，不啟用 |
 
-```sh
-edict init
-```
+Codex 將 `/edict` 換成 `$edict`。不用每次任務重複命令。引用文件或程式碼中的命令不代表授權啟用。
 
-依提示設定共用代理、模型與各角色設定；留白模型使用該工具預設。初始化不啟動代理、不改目前對話模型。設定寫入 `.edict/config.json`；技能安裝到 `.agents/skills/edict` 及 `.claude/skills/edict`。Cursor 也會讀取上述目錄。這些檔案可隨專案納入版本控制，讓新的工作樹取得相同技能與設定。
+## Cursor 持續啟用
 
-接著在目前對話說「用 Edict 處理這個需求」。若既有對話尚未發現新技能，說「讀取 .agents/skills/edict/SKILL.md，依 Edict 流程處理這個需求」，不需要另開對話。
+Cursor 的一般技能呼叫只附於單則訊息。初次 `/edict init` 保存設定後，代理會請你在 `/` 技能選單為 Edict 選 **Use as Mode**，或使用介面對應的 Option+Enter／Alt+Enter。確認輸入框出現 Edict 模式標記後，代理完成本次 init；之後正常交代工作，不必每次附加技能。
 
-## 角色設定
+CLI 將此過程保存為 active=false、pending=cursor-custom-mode，確認原生模式選定後才改成 active=true；未完成時拒絕派工。off 會停用狀態，並提示退出模式標記。模式未退出前也必須遵守停用狀態，不會自動恢復流程。
 
-```sh
-edict roles
-edict config
-edict config set menxia --agent codex --model MODEL_ID --effort high
-edict config set bingbu --agent cursor --model MODEL_ID
-edict config set menxia --clear-model
-edict doctor
-```
+[Cursor 原生模式文件](https://cursor.com/docs/agent/prompting) 說明 Agents Window 與 CLI 都支援 Custom Mode；當地 Orca 使用的版本與介面仍須實際確認。有版本無法選定模式時，init 保持待完成，不宣稱已達成持續啟用。
 
-`MODEL_ID` 換成使用者選定、供應商實際接受的模型識別碼。Edict 不維護可能過期的模型清單，不自動換模型。`effort` 須搭配模型，接受值由 Orca 與實際代理驗證。切換代理會清除舊模型及推理強度；換模型會清除舊推理強度。設定只影響新 worker。太子通常由目前對話履行，設定不會改變目前對話模型。
+## 狀態與設定
 
-`edict init --yes --agent codex` 可用於非互動初始化；所有角色先使用該工具預設模型，再用 `config set` 調整。再次初始化保留設定，只更新未經本機修改的 Edict 技能檔；遇到同名既有技能就停止，不覆寫。
+首次 init 優先使用代理提供的原生對話ID；沒有時回傳獨立的 conversation:UUID 識別碼。代理將識別碼保留在本對話，後續 CLI 明確沿用，並在壓縮摘要保留開關、識別碼、角色設定及目前 Run。不得以專案或終端機判定對話，也不掃描並猜選最近狀態。識別碼遺失時須回報，不默默重設。
 
-## Orca 通訊
+狀態保存於 ~/.config/edict/sessions，以 SHA-256 命名並限制權限；EDICT_HOME 可更換位置。修改 A 對話不改 B。這是供代理依對話指令讀取的資料，沒有背景機制自動注入。技能無法保證所有代理在壓縮後都正確延續指令，必須實測，遺失上下文時明列限制。
 
-主對話協調者讀取本機 Orca 版本對應指南，建立 Run 後，依序派規劃、方案審查、派工、執行與成果驗收。worker 完成時由 Orca 喚醒原對話，協調者推進後續工作。Edict 不啟動伺服器、看板或常駐輪詢程序。
+各角色可選 Claude、Codex、Cursor 與使用者指定模型；未指定模型沿用工具預設。不自動換供應商或降級。改設定不會更換執行中的 worker 模型。
 
-```sh
-edict dispatch zhongshu --spec-file /tmp/edict-plan.txt --run RUN_ID --worktree current --dry-run
-```
+## Orca 與 CLI
 
-`--dry-run` 僅輸出參數與完整角色任務；移除後才實際派工。文字經 stdin 傳入 `worker-start --spec-file -`，不拼接 shell。派工保留目前工作目錄與 Orca 呼叫身分；`--project` 僅選擇設定來源。
+目前對話負責協調，不另開主對話。派工經 Orca worker-start，任務從 stdin 傳入；ask、reply、worker_done、喚醒及復原依執行主機的版本對應指南。派工狀態以 Orca 為準；本套件只保存收據索引。
 
-可能同時修改檔案的任務交由 Orca 建立工作樹：
+使用者通常只需對話命令。以下供代理操作，識別碼與模型需換成實際值：
 
 ```sh
-edict dispatch bingbu --spec-file /tmp/edict-build.txt --run RUN_ID --worktree new-top-level --repo id:REPO_ID --name edict-bingbu
+edict init --yes --agent codex
+edict status --session conversation:RETURNED_ID
+edict config set menxia --session conversation:RETURNED_ID --agent claude --model MODEL_ID
+edict dispatch zhongshu --session conversation:RETURNED_ID --spec-file /tmp/edict-plan.txt --dry-run
+edict off --session conversation:RETURNED_ID
 ```
 
-`REPO_ID` 由 `orca repo list --json` 取得。Edict 不自行註冊專案或建立 git checkout。實際派工失敗或結果未知時不重試、不自動改設定；依 Orca 收據及復原指南處理。
+首次設定由代理透過對話詢問後保存；--yes 不代表代替使用者選擇模型。重複 init 時需沿用已保存的 --session，避免建立另一份狀態。Codex 環境有 CODEX_THREAD_ID 時可自動辨識。
 
-Orca 入口依 `ORCA_CLI_COMMAND`、`ORCA_DEV_REPO_ROOT`、作業系統選擇；Linux 預設 `orca-ide`，不誤啟動 GNOME 螢幕閱讀器。`ORCA_CLI_COMMAND` 必須是單一執行檔名稱或路徑，不含 shell 參數。
-
-## 驗證範圍
-
-```sh
-npm test
-npm run check
-```
-
-測試使用隔離目錄及模擬 Orca，涵蓋設定、安裝衝突、參數轉交、shell 字面值及失敗不重試。`edict doctor` 檢查本機 Orca 狀態與參數；不能證明模型帳號可用或真實多代理任務已通過。完整實際派工測試需在 Orca 管理的專案、已登入代理與有效模型下執行。
-
-來源、角色差異及範圍見 [NOTICE.md](NOTICE.md)。
-
-## 更新其他電腦
-
-在該電腦的 `edict-orca` 儲存庫執行：
+## 更新與舊版
 
 ```sh
 git pull --rebase
 node scripts/install-local.mjs
 ```
 
-安裝連結指向本機儲存庫，更新後指令使用新版程式。在已初始化的工作專案內執行 `edict init --yes`，更新專案技能並保留各角色設定。若技能曾被手動修改，初始化會停止並指出衝突位置。
+安裝連結指向本機儲存庫，不必向各工作專案複製技能。0.1 版專案檔案不自動刪除或覆寫，需要時由代理明確用 `init --yes --session <ID> --import-config <舊config.json>` 匯入設定。舊版同名專案技能可能仍被讀取，升級時應先備份並停用，避免入口混用。本版不擅自刪除專案檔案。
 
-程式來源透過 GitHub 分享；各專案的 `.edict/config.json` 由該專案自行保存。不同電腦可使用不同模型設定，但都須在當地登入相關代理。
+每台電腦各自登入代理；GitHub 分享程式，不分享對話狀態或憑證。
+
+## 驗證
+
+```sh
+npm test
+npm run check
+```
+
+測試包含對話隔離、開關、設定與模型參數、失敗不重派，以及安裝不修改代理設定。模擬 Orca 不能證明供應商接受特定模型；技能指令不能代替各代理多輪對話與壓縮後的實測。Windows 與 Linux 仍須另外驗證。
+
+角色來源與適用範圍見 [NOTICE.md](NOTICE.md)。

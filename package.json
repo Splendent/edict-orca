@@ -1,11 +1,18 @@
 {
   "name": "edict-orca",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Edict role workflow for existing Orca conversations",
+  "description": "Manually enabled, conversation-scoped Edict workflow for Orca",
   "type": "module",
-  "bin": { "edict": "bin/edict.mjs" },
-  "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test", "check": "node --check src/cli.mjs" },
+  "bin": {
+    "edict": "bin/edict.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs"
+  },
   "license": "MIT"
 }

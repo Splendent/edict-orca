@@ -1,32 +1,17 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-
-const root = fileURLToPath(new URL('..', import.meta.url));
+import { install, planInstall } from '../src/install.mjs';
 try {
-  const { values } = parseArgs({ options: { 'bin-dir': { type: 'string' } } });
-  const dir = path.resolve(values['bin-dir'] ?? path.join(os.homedir(), '.local', 'bin'));
-  const source = path.join(root, 'bin', 'edict.mjs');
-  const destination = path.join(dir, process.platform === 'win32' ? 'edict.cmd' : 'edict');
-  const windows = `@echo off\r\nnode "${source}" %*\r\n`;
-  let existing;
-  try { existing = fs.lstatSync(destination); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  if (existing) {
-    const owned = process.platform === 'win32'
-      ? existing.isFile() && fs.readFileSync(destination, 'utf8') === windows
-      : existing.isSymbolicLink() && fs.readlinkSync(destination) === source;
-    if (!owned) throw new Error(`已有其他指令，未覆寫：${destination}`);
+  const { values } = parseArgs({ options: { 'bin-dir': { type: 'string' }, 'user-home': { type: 'string' }, 'dry-run': { type: 'boolean' } } });
+  const userHome = values['user-home'] || os.homedir();
+  // Isolated home installs must not touch the invoking agent's real config homes.
+  const env = values['user-home'] ? {} : process.env;
+  if (values['dry-run']) {
+    const plan = planInstall(userHome, values['bin-dir'], env);
+    console.log(JSON.stringify({ links: plan.links, writes: plan.writes.map(x => x.file) }, null, 2));
   } else {
-    fs.mkdirSync(dir, { recursive: true });
-    if (process.platform === 'win32') fs.writeFileSync(destination, windows, { flag: 'wx' });
-    else { fs.chmodSync(source, 0o755); fs.symlinkSync(source, destination); }
+    install(userHome, values['bin-dir'], env);
+    console.log('成功：已安裝 Edict 指令與共用手動技能。沒有啟用任何對話，也不修改代理 hook。\n於目前對話執行 /edict init；Codex 使用 $edict init。\n若技能尚未出現在目前對話清單，可直接請代理讀取已安裝的 SKILL.md。');
   }
-  console.log(`成功：${destination}\n在目標專案執行 edict init。`);
-  if (!(process.env.PATH ?? '').split(path.delimiter).includes(dir)) console.log(`請先把 ${dir} 加入 PATH，或使用指令完整路徑。`);
-} catch (error) {
-  console.error(`失敗：${error.message}`);
-  process.exitCode = 1;
-}
+} catch (error) { console.error(`失敗：${error.message}`); process.exitCode = 1; }
