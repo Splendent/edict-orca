@@ -19,7 +19,6 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         node: [20, 24]
     env:
-      EDICT_HOME: ${{ runner.temp }}/edict-ci-state
       EDICT_SESSION_ID: ''
       CODEX_THREAD_ID: ''
       ORCA_CLI_COMMAND: /nonexistent/edict-ci-disallows-real-orca
@@ -34,6 +33,8 @@ jobs:
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
       - name: Test
+        env:
+          EDICT_HOME: ${{ runner.temp }}/edict-ci-state
         run: npm test
       - name: Check syntax
         run: npm run check
