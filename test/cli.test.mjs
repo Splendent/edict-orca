@@ -59,13 +59,25 @@ test('runtime executable resolution never chooses Linux screen reader', () => {
   assert.equal(orcaCommand({ ORCA_CLI_COMMAND: '/path with spaces/orca' }, 'linux'), '/path with spaces/orca');
 });
 
-function fakeOrca(t, dir, { fail = false, ready = true } = {}) {
+function fakeOrca(t, dir, { fail = false, ready = true, missingCommand = null, missingFlag = null, failHelp = null } = {}) {
   const file = path.join(dir, 'fake orca.mjs');
   fs.writeFileSync(file, `#!/usr/bin/env node
 import fs from 'node:fs';
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({args, cwd:process.cwd(), body:fs.readFileSync(0,'utf8'), identity:process.env.ORCA_TEST_IDENTITY})+'\\n');
-if(args.includes('--help')) console.log('--spec-file --agent --model --effort --run --worktree');
+if(args.includes('--help')) {
+  const command=args.slice(0,-1).join(' ');
+  if(command===${JSON.stringify(failHelp)}) {console.error('unsupported interface');process.exit(2);}
+  const flags={
+    'orchestration worker-start':['--spec-file','--task','--task-title','--agent','--model','--effort','--run','--worktree','--repo','--name','--base-branch','--json'],
+    'orchestration task-create':['--spec-file','--task-title','--deps','--parent','--run','--json'],
+    'orchestration task-list':['--run','--ready','--json'],
+    'orchestration send':['--to','--run','--subject','--body','--json'],
+    'orchestration run-create':['--objective','--json'],
+    'worktree show':['--worktree','--json'],
+  }[command]??[];
+  console.log(flags.filter(flag=>!(command===${JSON.stringify(missingCommand)}&&flag===${JSON.stringify(missingFlag)})).join(' '));
+}
 else if(args[0]==='status') console.log(JSON.stringify({ok:true,result:{runtime:{state:'ready',reachable:${ready},appVersion:'test'}}}));
 else {console.log(JSON.stringify({ok:${!fail},failedStage:${fail ? "'launch'" : 'null'},dispatchId:'fake-dispatch',taskId:'fake-task',runId:'fake-run'})); process.exitCode=${fail ? 1 : 0};}
 `);
@@ -163,8 +175,65 @@ test('doctor checks interface and runtime without dispatch or consuming inbox', 
   const result = run(dir, ['doctor'], { env: runtime.env });
   assert.equal(result.status, 0, result.stderr);
   const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(calls.map(call => call.args), [['orchestration', 'worker-start', '--help'], ['status', '--json']]);
+  assert.deepEqual(calls.map(call => call.args), [
+    ['orchestration', 'worker-start', '--help'],
+    ['orchestration', 'task-create', '--help'],
+    ['orchestration', 'task-list', '--help'],
+    ['orchestration', 'send', '--help'],
+    ['orchestration', 'run-create', '--help'],
+    ['worktree', 'show', '--help'],
+    ['status', '--json'],
+  ]);
   assert.match(result.stdout, /模型與帳號仍須實際派工驗證/);
+});
+
+test('doctor rejects missing dependency and continuation capabilities before runtime access', t => {
+  for (const [missingCommand, missingFlag] of [
+    ['orchestration worker-start', '--task'],
+    ['orchestration task-create', '--deps'],
+    ['orchestration task-list', '--ready'],
+    ['orchestration send', '--body'],
+    ['orchestration run-create', '--objective'],
+    ['worktree show', '--json'],
+  ]) {
+    const dir = workspace(t);
+    const runtime = fakeOrca(t, dir, { missingCommand, missingFlag });
+    const result = run(dir, ['doctor'], { env: runtime.env });
+    assert.equal(result.status, 1, result.stdout);
+    assert.ok(result.stderr.includes(missingCommand), result.stderr);
+    assert.ok(result.stderr.includes(missingFlag), result.stderr);
+    const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.ok(calls.every(call => call.args.includes('--help')));
+    assert.equal(fs.existsSync(homes.get(dir)), false);
+  }
+});
+
+test('doctor preserves unsupported-command failure and does not claim success', t => {
+  const dir = workspace(t);
+  const runtime = fakeOrca(t, dir, { failHelp: 'orchestration task-create' });
+  const result = run(dir, ['doctor'], { env: runtime.env });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /unsupported interface/);
+  assert.doesNotMatch(result.stdout, /成功/);
+  const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.length, 2);
+  assert.equal(fs.existsSync(homes.get(dir)), false);
+});
+
+test('version reports package identity without reading sessions or invoking Orca', t => {
+  const dir = workspace(t);
+  const runtime = fakeOrca(t, dir);
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  for (const flag of ['--version', '-V']) {
+    const result = run(dir, [flag], { env: { ...runtime.env, EDICT_SESSION_ID: 'invalid session' } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `${pkg.name} ${pkg.version}\n`);
+  }
+  assert.equal(run(dir, ['init', '--version'], { env: runtime.env }).status, 1);
+  assert.equal(run(dir, ['--version', '--yes'], { env: runtime.env }).status, 1);
+  assert.equal(fs.existsSync(homes.get(dir)), false);
+  assert.equal(fs.existsSync(runtime.log), false);
+  assert.deepEqual(fs.readdirSync(dir), ['fake orca.mjs']);
 });
 
 test('doctor does not claim success for unreachable runtime', t => {

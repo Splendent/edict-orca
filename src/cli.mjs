@@ -9,6 +9,7 @@ import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult
 import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
 import { dispatchReady } from './schedule.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
+const PACKAGE = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 const HELP = `Edict：在目前對話手動啟用 Orca 協作
 
@@ -33,6 +34,7 @@ Codex 原生技能入口為 $edict init（其他子命令同理）。
   edict continue <DispatchID> --spec-file <檔案|-> --session <ID>
   edict dispatch-ready --plan-file <派工JSON> --session <ID> [--concurrency 3] [--dry-run]
   edict doctor --session <ID>
+  edict --version
   edict roles
 派工選項：--worktree current|<selector>|new-top-level、--repo、--name、--base-branch、--title
 init 可用 --project 指定工作專案；不寫入專案技能或設定。
@@ -55,24 +57,36 @@ function settings(config, role, options) {
 }
 async function doctor(id) {
   const state = readSession(id);
-  console.log(`對話：${id}；Edict：${state?.active ? '已啟用' : '未啟用'}`);
+  console.log(`${PACKAGE.name} ${PACKAGE.version}；對話：${id}；Edict：${state?.active ? '已啟用' : '未啟用'}`);
   const command = orcaCommand();
-  const help = runOrca(command, ['orchestration', 'worker-start', '--help']);
-  if (help.status !== 0) return printResult(help);
-  for (const flag of ['--spec-file', '--agent', '--model', '--effort', '--run', '--worktree']) {
-    if (!help.stdout.includes(flag)) throw new Error(`目前 Orca 不支援 ${flag}`);
+  const interfaces = [
+    { args: ['orchestration', 'worker-start'], flags: ['--spec-file', '--task', '--task-title', '--agent', '--model', '--effort', '--run', '--worktree', '--repo', '--name', '--base-branch', '--json'] },
+    { args: ['orchestration', 'task-create'], flags: ['--spec-file', '--task-title', '--deps', '--parent', '--run', '--json'] },
+    { args: ['orchestration', 'task-list'], flags: ['--run', '--ready', '--json'] },
+    { args: ['orchestration', 'send'], flags: ['--to', '--run', '--subject', '--body', '--json'] },
+    { args: ['orchestration', 'run-create'], flags: ['--objective', '--json'] },
+    { args: ['worktree', 'show'], flags: ['--worktree', '--json'] },
+  ];
+  for (const item of interfaces) {
+    const help = runOrca(command, [...item.args, '--help']);
+    if (help.status !== 0) return printResult(help);
+    const supported = new Set(help.stdout.match(/--[a-z][a-z0-9-]*/g) ?? []);
+    for (const flag of item.flags) {
+      if (!supported.has(flag)) throw new Error(`目前 Orca 的 ${item.args.join(' ')} 不支援 ${flag}`);
+    }
   }
   const status = runOrca(command, ['status', '--json']);
   if (status.status !== 0) return printResult(status);
   const data = JSON.parse(status.stdout);
   if (data.ok !== true || data.result?.runtime?.reachable !== true || data.result.runtime.state !== 'ready') throw new Error('Orca 執行環境尚未就緒');
-  console.log('成功：Orca 可連線且支援派工參數。模型與帳號仍須實際派工驗證。');
+  console.log('成功：Orca 可連線，基本派工、Task 相依、批次就緒查詢與續辦所需介面齊備。模型與帳號仍須實際派工驗證。');
   return 0;
 }
 
 export async function main(argv) {
   const { values: options, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, yes: { type: 'boolean' }, session: { type: 'string' }, project: { type: 'string' },
+    version: { type: 'boolean', short: 'V' },
     coordinator: { type: 'string' }, 'mode-confirmed': { type: 'boolean' },
     agent: { type: 'string' }, model: { type: 'string' }, effort: { type: 'string' },
     'clear-model': { type: 'boolean' }, 'clear-effort': { type: 'boolean' }, 'import-config': { type: 'string' },
@@ -83,6 +97,11 @@ export async function main(argv) {
     'base-branch': { type: 'string' }, title: { type: 'string' },
   } });
   const [command, sub, role] = positionals;
+  if (options.version) {
+    if (positionals.length || Object.keys(options).some(key => key !== 'version')) throw new Error('--version 必須單獨使用');
+    console.log(`${PACKAGE.name} ${PACKAGE.version}`);
+    return 0;
+  }
   if (options.help || !command || command === 'help') { console.log(HELP); return 0; }
   const allowed = {
     init: ['yes', 'session', 'project', 'agent', 'model', 'effort', 'import-config', 'coordinator', 'mode-confirmed'],
