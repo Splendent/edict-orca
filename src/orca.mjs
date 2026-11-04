@@ -9,7 +9,7 @@ export function dispatchArgs(config, role, options = {}) {
   if (!ROLES[role]) throw new Error(`未知角色：${role}`);
   const worktree = options.worktree ?? 'current';
   if (worktree.startsWith('new-') && !['new-child', 'new-top-level'].includes(worktree)) throw new Error(`無效的新工作樹類型：${worktree}`);
-  if (worktree.startsWith('new-') && (!options.repo || !options.name)) throw new Error('新工作樹必須提供 --repo 與 --name');
+  if (worktree === 'new-top-level' && (!options.repo || !options.name)) throw new Error('獨立工作樹必須提供 --repo 與 --name');
   if (!worktree.startsWith('new-') && (options.repo || options.name || options['base-branch'])) throw new Error('--repo、--name、--base-branch 只能用於新工作樹');
   const item = config.roles[role];
   if (options.task && (options.deps || options.parent)) throw new Error('既有 Task 的相依與 parent 已在建立時指定，不能於啟動時覆寫');

@@ -24,7 +24,7 @@ edict dispatch zhongshu --session <本對話ID> --spec-file /tmp/edict-plan.txt 
 
 CLI 從目前對話的角色設定取得代理／模型，經 stdin 交給 Orca；成功收據的 Run／Task／Dispatch ID 另存此對話狀態。派工時沿用目前工作目錄，明確指定 --worktree。不要用專案目錄或終端機作為對話身分。
 
-- 唯讀角色可用 `current`；可能同時修改檔案的 worker 使用 Orca 建立的獨立工作樹，例如 `--worktree new-top-level --repo id:<repo-id> --name edict-bingbu`。先用 `<入口> repo list --json` 取得實際 ID。不要自行 git checkout 建立 worker 工作樹。
+- 一般派工預設 `current`，包括唯讀與讀寫範圍不衝突的實作，代理留在協調者目前工作樹內。只有需要隔離平行編輯時才用 `--worktree new-child --name edict-bingbu`，建立目前工作樹底下的子工作樹；同專案省略 --repo，名稱可省略由 Orca 決定。`new-top-level` 僅用於使用者明確要求獨立工作樹的工作，不作為一般實作或平行派工的預設。不支援 new-child 時回報限制，不自動改用 new-top-level。完整選擇與跨主機限制見 [相依派工工具](scheduling.md)。不要自行 git checkout 建立 worker 工作樹。
 - 檔案位置以執行者收據中的工作樹為準。新工作樹不含未 commit 的變更；先確認基準包含待審內容，或給審查者完整實際檔案路徑。整合變更依專案規則，不擅自 commit、merge、push 或發布。
 - 保留收據，依收據 `next` 指示處理。啟動本階段所有獨立 worker 後**結束本輪**，讓 Orca 在回報時喚醒你。這是等待方式，不代表任務完成；不能為了「持續工作」輪詢、sleep 或開另一輪重複派工。
 - 喚醒可能延後送達。依本機 Orca 1.4.246 的檢視紀錄，兩種暫緩條件為：最後一次人工操作輸入後 10 分鐘內，且 Orca 判定輸入列仍有內容；或 Claude 的狀態為 waiting／blocked、該狀態收到後 10 分鐘內，且畫面有選單或確認提示（讀不到畫面時也可能成立）。後者不等同一般閒置等待下一則訊息。暫緩期間每 2 秒重查；另有 TUI 送達條件，其整體等待上限未查證，不能保證 10 分鐘內送達。一次紀錄在最後輸入後 10 分 2 秒解除，但使用者表示輸入框為空，輸入列判定原因仍未查證。Run 尚有未完成派工而收到使用者訊息時，由協調者本輪單次執行 `<入口> orchestration check --run <run-id>`，讀取最舊一批未讀郵件並處理；一次不保證取完全部郵件，依收據處理後續。不得改成輪詢、背景消費信箱或因喚醒延後重複派工。

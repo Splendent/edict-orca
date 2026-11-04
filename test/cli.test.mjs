@@ -45,6 +45,7 @@ test('tool defaults omit model/effort, invalid worktree combinations are rejecte
   const args = dispatchArgs(c, 'menxia');
   assert.equal(args.includes('--model'), false);
   assert.equal(args.includes('--effort'), false);
+  assert.equal(args[args.indexOf('--worktree') + 1], 'current');
   assert.throws(() => dispatchArgs(c, 'invalid'), /未知角色/);
   assert.throws(() => dispatchArgs(c, 'bingbu', { name: 'no-new-tree' }), /只能用於新工作樹/);
   assert.throws(() => dispatchArgs(c, 'bingbu', { worktree: 'new-top-level' }), /--repo 與 --name/);
@@ -101,6 +102,24 @@ test('dispatch delivers literal task via stdin, exact argv, identity and cwd pre
   assert.ok(calls[0].body.includes('worker_done'));
   assert.equal(calls[0].args[calls[0].args.indexOf('--model') + 1], 'model with spaces');
   assert.equal(fs.existsSync(path.join(dir, 'MUST_NOT_EXIST')), false);
+});
+
+test('same-project child dispatch needs no repo and never falls back to a top-level worktree', t => {
+  const dir = setup(t);
+  const runtime = fakeOrca(t, dir);
+  for (const extra of [[], ['--name', 'child-bingbu']]) {
+    const result = run(dir, ['dispatch', 'bingbu', '--spec-file', '-', '--worktree', 'new-child', ...extra], { env: runtime.env, input: 'Implement in an isolated child worktree' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.args[call.args.indexOf('--worktree') + 1], 'new-child');
+    assert.equal(call.args.includes('--repo'), false);
+    assert.equal(call.args.includes('new-top-level'), false);
+  }
+  assert.equal(calls[0].args.includes('--name'), false);
+  assert.equal(calls[1].args[calls[1].args.indexOf('--name') + 1], 'child-bingbu');
 });
 
 test('failed dispatch is returned intact and never retried', t => {

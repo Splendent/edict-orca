@@ -69,6 +69,8 @@ CLI 將此過程保存為 active=false、pending=cursor-custom-mode，確認原�
 
 目前對話負責協調，不另開主對話。派工經 Orca worker-start，任務從 stdin 傳入；ask、reply、worker_done、喚醒及復原依執行主機的版本對應指南。派工狀態以 Orca 為準；本套件只保存收據索引。
 
+一般派工使用 current，代理留在目前工作樹；讀寫範圍不衝突時也能在其中平行實作。需要隔離編輯時使用 new-child，在目前工作樹底下建立子工作樹；只有使用者明確要求獨立工作才用 new-top-level。同專案的 new-child 不需指定 repo，名稱可交由 Orca 決定。工作樹父子關係與 Run 監督關係分開，受派代理不會因此自動成為子工作樹。
+
 | 層次 | 責任 |
 | --- | --- |
 | 目前對話 | 整理需求、讀取角色結論、轉交成果及回報 |

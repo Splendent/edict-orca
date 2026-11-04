@@ -34,7 +34,7 @@ export function validatePlan(plan,state,roots) {
     dispatchArgs(state.config,item.role,{...result,run:plan.run});
     const root=roots?roots.get(result.worktree):result.worktree==='current'?state.project:result.worktree.startsWith('path:')?result.worktree.slice(5):null;
     result.physicalReads=geometry(root,reads);result.physicalWrites=geometry(root,writes);
-    if (result.worktree.startsWith('new-')) {
+    if (result.worktree.startsWith('new-') && result.name) {
       const key=`${result.repo}:${result.name}`;
       if (creations.has(key)) throw new Error('同批不可重複建立相同名稱的工作樹');
       creations.add(key);

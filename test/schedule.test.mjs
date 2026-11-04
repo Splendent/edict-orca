@@ -82,6 +82,29 @@ test('independent same-role tasks launch concurrently and both receipts are save
   for(const item of starts) assert.equal(item.args[item.args.indexOf('--model')+1],'selected-model');
   assert.equal(events.filter(x=>x.kind==='list').length,2);
 });
+
+test('unnamed child worktrees are distinct creation requests while duplicate explicit names are refused',t=>{
+  const f=fixture(t),tasks=[{task:'task-a',role:'bingbu',worktree:'new-child',reads:[]},{task:'task-b',role:'bingbu',worktree:'new-child',reads:[]}],p=f.plan(tasks);
+  fs.writeFileSync(f.native,JSON.stringify(tasks.map(x=>({id:x.task,status:'ready'}))));
+  const result=f.cli(['dispatch-ready','--plan-file',p.file,'--dry-run']);
+  assert.equal(result.status,0,result.stderr);
+  const output=JSON.parse(result.stdout);
+  assert.equal(output.launches.length,2);
+  assert.deepEqual(output.held,[]);
+  for(const row of output.launches) {
+    assert.equal(row.args[row.args.indexOf('--worktree')+1],'new-child');
+    assert.equal(row.args.includes('--repo'),false);
+    assert.equal(row.args.includes('--name'),false);
+  }
+  assert.equal(f.calls().filter(x=>x.kind==='start').length,0);
+  const callsBefore=f.calls().length;
+  p.value.tasks.forEach(item=>{item.name='same-child';});
+  fs.writeFileSync(p.file,JSON.stringify(p.value));
+  const duplicate=f.cli(['dispatch-ready','--plan-file',p.file,'--dry-run']);
+  assert.equal(duplicate.status,1);
+  assert.match(duplicate.stderr,/不可重複建立相同名稱/);
+  assert.equal(f.calls().length,callsBefore);
+});
 test('dependencies release one work item without waiting for an unrelated active item',t=>{
   const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'},{task:'task-b',role:'libu'},{task:'task-c',role:'hubu'}]);
   fs.writeFileSync(f.native,JSON.stringify([{id:'task-a',status:'completed'},{id:'task-b',status:'pending',deps:['task-a']},{id:'task-c',status:'dispatched'}]));
