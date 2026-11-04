@@ -58,7 +58,9 @@ export function reloadManifest(root) {
 }
 export async function updateInstallation(root, { fetchImpl } = {}) {
   root = fs.realpathSync(root);
-  if (fs.realpathSync(git(root, ['rev-parse', '--show-toplevel'])) !== root) throw new Error('Edict 須安裝在獨立的 Git clone 根目錄，不能更新工作專案或來源壓縮檔');
+  const own = fs.statSync(root, { bigint: true });
+  const top = fs.statSync(git(root, ['rev-parse', '--show-toplevel']), { bigint: true });
+  if (own.dev !== top.dev || own.ino !== top.ino) throw new Error('Edict 須安裝在獨立的 Git clone 根目錄，不能更新工作專案或來源壓縮檔');
   if (!ORIGIN.test(git(root, ['config', '--get', 'remote.origin.url']))) throw new Error('Edict origin 不是 Splendent/edict-orca；未更新，也不修改遠端設定');
   const before = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const current = version(before.version);
