@@ -2,7 +2,7 @@
 
 將 [cft0808/edict](https://github.com/cft0808/edict) 的角色協作流程改編為既有 Orca 對話可用的命令列與手動技能。沿用目前對話，透過 Orca 派出 Claude Code、Codex 或 Cursor 代理，各角色可分別設定模型。本套件不包含原版網頁看板或 OpenClaw 執行環境；來源版本與改編範圍見 [NOTICE.md](NOTICE.md)。
 
-目前版本為 **0.3.0-beta.1**，屬預覽版。支援範圍與尚未驗證事項見下表；不宣稱跨所有代理、平台及對話恢復方式都已驗證。
+目前版本為 **0.3.0-beta.2**，屬預覽版。支援範圍與尚未驗證事項見下表；不宣稱跨所有代理、平台及對話恢復方式都已驗證。
 
 在目前對話執行一次 `/edict init`，完成角色與模型設定後，正常交代工作。這段對話依 Edict 規劃、獨立審核、派工與驗收；一般問答直接回答。其他對話預設未啟用。套件不安裝 hook、常駐規則或輪詢程序。
 
@@ -15,7 +15,7 @@ Claude Code、Cursor 使用 `/edict init`；Codex 原生技能入口是 `$edict 
 在要保留套件的目錄安裝固定版本，每台電腦一次。以下為 macOS／Linux shell 指令：
 
 ```sh
-git clone --branch v0.3.0-beta.1 https://github.com/Splendent/edict-orca.git
+git clone --branch v0.3.0-beta.2 https://github.com/Splendent/edict-orca.git
 cd edict-orca
 node scripts/install-local.mjs --dry-run
 node scripts/install-local.mjs
@@ -33,7 +33,7 @@ node bin/edict.mjs --version
 | macOS、Orca 1.4.246、Codex | 真實 Task 建立、原生相依、單項與平行派工、同角色續辦及收據索引 | 小型統計任務；未涵蓋完整多角色開發流程 |
 | Claude Code、Cursor | 角色設定、模型參數與模擬 Orca 呼叫；手動入口設定 | 不代表兩者的真實多輪與壓縮恢復均已通過；Cursor 另須確認原生模式 |
 | macOS／Ubuntu CI、Node.js 20／24 | 單元測試與語法檢查，狀態及設定使用臨時目錄 | 不啟動真實 Orca、不使用供應商憑證；結果以該版本的 [CI 紀錄](https://github.com/Splendent/edict-orca/actions) 為準 |
-| Windows | 有命令入口與路徑處理程式 | 尚未完成當地安裝與真實協作驗證，不列入 CI 平台 |
+| Windows 更新器 CI、Node.js 24 | 使用本機 Git 與模擬發佈清單驗證更新器 | 不代表 Windows 完整安裝或真實多代理協作已通過 |
 
 `edict --version` 顯示套件版本，不需要啟用對話。`edict doctor --session <本對話ID>` 唯讀檢查 Orca 連線，以及基本派工、Task 相依、批次就緒查詢和續辦所需介面；不建立 Run／Task、不派工、不讀信箱。檢查成功不代表帳號額度、特定模型或完整工作流程已驗證。
 
@@ -45,6 +45,7 @@ node bin/edict.mjs --version
 | `/edict status` | 查看本對話開關、角色模型及 Orca 派工紀錄 |
 | `/edict config` | 調整本對話角色設定，只影響之後啟動的 worker |
 | `/edict off` | 停用本對話，保留紀錄；不取消已派工作 |
+| `/edict update` | 更新這台電腦的套件，並讓目前對話重讀新版指引；保留現有工作 |
 | `/edict help` | 顯示用法，不啟用 |
 
 Codex 將 `/edict` 換成 `$edict`。不用每次任務重複命令。引用文件或程式碼中的命令不代表授權啟用。
@@ -98,20 +99,30 @@ edict off --session conversation:RETURNED_ID
 
 ## 更新與舊版
 
-使用固定 tag 更新前，先完成已派工作並保留本機修改。切換版本會同時改變所有指向此套件目錄的技能連結內容。
+已安裝 0.3.0-beta.2 或更新版本時，在原本對話執行一次：
 
-以下在套件目錄操作；`git status --short` 有輸出時先處理本機修改，不直接切換。將版本號換成要安裝的已發佈版本：
+```text
+/edict update
+```
+
+Codex 使用 `$edict update`。代理會更新這台電腦的 Edict，重新讀取指引，沿用本對話的識別碼、開關、模型、Run 與未完成工作。不需重新 init，也不重開或重派代理。已開出的工作樹不移動；新版派工選擇適用於之後的工作。其他對話不會自動啟用或重新載入。
+
+更新只選官方 GitHub Release 已發佈的版本。預覽版可更新到較新的預覽版或正式版，正式版不自動切到預覽版，也不降版；需要 Git 與 GitHub 網路連線，不需 GitHub 登入或 npm 安裝。安裝目錄有本機修改、未追蹤檔案或另一個更新鎖時停止，保留原檔。下載期間出現修改也不覆寫。下載及切換使用 tag，不執行 pull、merge、reset 或自動重試。
+
+終端機也可執行 `edict update`，或 `edict update --session <本對話ID>`。CLI 只更新安裝檔案並回傳待重讀路徑；目前對話須由代理實際讀完指引後才算套用，CLI 不會向聊天注入內容。即使已是最新版，對話命令仍會重新讀取規則。
+
+### 舊版第一次升級
+
+0.3.0-beta.1 與更舊版本尚無 update 命令，需先升級安裝副本一次。在 Edict 套件目錄執行；先確認 `git status --short` 沒有本機修改，再執行後續命令：
 
 ```sh
 git status --short
-git fetch origin --tags
-git switch --detach v0.3.0-beta.1
-node scripts/install-local.mjs --dry-run
-node scripts/install-local.mjs
+git fetch origin tag v0.3.0-beta.2
+git switch --detach v0.3.0-beta.2
 node bin/edict.mjs --version
 ```
 
-舊副本若與遠端歷史不同，不使用 pull、merge 或強制重設來混合歷史。先保留本機修改，將指定版本 clone 到另一個目錄；依「移除安裝」確認並移除舊安裝的連結，再從新目錄安裝。安裝器會拒絕覆寫指向別處的既有連結。換裝期間保留舊目錄，對話狀態留在使用者目錄，不需刪除。
+接著回原對話執行 `/edict update`。安裝連結保留原路徑時不需搬動技能；固定版本更新會影響所有共用該目錄的後續 CLI 呼叫，其他對話只會在使用者要求時重讀。保留本機變更，不使用強制重設。若安裝副本無法直接升級，可先保留舊目錄、將指定版本 clone 到新目錄，依「移除安裝」核對並移除舊連結後換裝；對話資料保留。
 
 安裝連結指向本機儲存庫，不必向各工作專案複製技能。0.1 版專案檔案不自動刪除或覆寫，僅限在本對話首次 init 前，由代理依使用者要求用 `init --yes --session <ID> --import-config <舊config.json>` 匯入設定。已有設定的對話改用 `edict config set <角色> --session <ID> ...` 逐角色調整，不能再次匯入覆寫。舊版同名專案技能可能仍被讀取，升級時應先備份並停用，避免入口混用。本版不擅自刪除專案檔案。
 
@@ -136,7 +147,7 @@ npm test
 npm run check
 ```
 
-CI 在 push 到 main 與對 main 的 pull request 執行上述檢查，只有 contents:read 權限，不使用真實代理或帳號憑證。測試包含對話隔離、開關、設定與模型參數、失敗不重派、相依與衝突排程、版本查詢、相容性檢查，以及安裝不修改代理設定。模擬 Orca 不能證明供應商接受特定模型；技能指令不能代替各代理多輪對話與壓縮後的實測。
+CI 在 push 到 main 與對 main 的 pull request 執行上述檢查；Windows 另跑更新器的本機 Git 整合測試及語法檢查。所有工作只有 contents:read 權限，不使用真實代理或帳號憑證。測試包含對話隔離、開關、設定與模型參數、失敗不重派、相依與衝突排程、版本查詢、相容性檢查、更新時的版本選擇、狀態保留與本機修改攔截，以及安裝不修改代理設定。模擬 Orca 不能證明供應商接受特定模型；技能指令不能代替各代理多輪對話與壓縮後的實測。
 
 角色來源與適用範圍見 [NOTICE.md](NOTICE.md)。
 

@@ -8,6 +8,7 @@ import { configure } from './configure.mjs';
 import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult } from './orca.mjs';
 import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
 import { dispatchReady } from './schedule.mjs';
+import { updateInstallation } from './update.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
 const PACKAGE = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -18,6 +19,7 @@ const HELP = `Edict：在目前對話手動啟用 Orca 協作
   /edict status   顯示此對話啟用狀態、角色模型與 Orca 派工紀錄
   /edict config   查看／修改此對話設定，不影響其他對話
   /edict off      停用此對話；不取消已派工作
+  /edict update   更新本機套件並由本對話重新讀取指引；保留現有工作
   /edict help     顯示說明，不啟用
 Codex 原生技能入口為 $edict init（其他子命令同理）。
 
@@ -34,9 +36,10 @@ Codex 原生技能入口為 $edict init（其他子命令同理）。
   edict continue <DispatchID> --spec-file <檔案|-> --session <ID>
   edict dispatch-ready --plan-file <派工JSON> --session <ID> [--concurrency 3] [--dry-run]
   edict doctor --session <ID>
+  edict update [--session <ID>]
   edict --version
   edict roles
-派工選項：--worktree current|<selector>|new-top-level、--repo、--name、--base-branch、--title
+派工選項：--worktree current|<selector>|new-child|new-top-level、--repo、--name、--base-branch、--title
 init 可用 --project 指定工作專案；不寫入專案技能或設定。
 安裝：node scripts/install-local.mjs（每台電腦一次；不啟用對話）
 對話狀態保存在使用者目錄；首次 init 可產生獨立對話識別碼，後續須明確沿用。模型只影響新 worker。`;
@@ -111,11 +114,23 @@ export async function main(argv) {
     'task-create': ['session','spec-file','run','deps','parent','title','dry-run'],
     continue: ['session','spec-file','title','dry-run'],
     'dispatch-ready': ['session','plan-file','concurrency','dry-run'],
+    update: ['session'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
   if (positionals.length > (command === 'config' ? 3 : ['dispatch','task-create','continue'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
   if (command === 'roles') { for (const [key, info] of Object.entries(ROLES)) console.log(`${key}\t${info.name}\t${info.duty}`); return 0; }
+  if (command === 'update') {
+    const supplied = options.session || process.env.EDICT_SESSION_ID || (process.env.CODEX_THREAD_ID ? `codex:${process.env.CODEX_THREAD_ID}` : null);
+    const id = supplied ? sessionId(supplied) : null;
+    // Validate an explicit conversation before changing installed files; never activate it.
+    if (id) readSession(id);
+    const result = await updateInstallation(ROOT);
+    const state = id ? readSession(id) : null;
+    print({ ...result, session: id, active: state?.active ?? false, runId: state?.runId ?? null,
+      note: '本機安裝已核對；目前對話尚須完成 reload.files 的重讀。其他對話不會自動啟用；既有代理與工作樹不移動。' });
+    return 0;
+  }
   const id = sessionId(options.session || (command === 'init' && !process.env.EDICT_SESSION_ID && !process.env.CODEX_THREAD_ID ? `conversation:${randomUUID()}` : undefined));
   if (command === 'context') { const text = context(id); if (text) console.log(text); return 0; }
   if (command === 'status') { print(readSession(id) ?? { session: id, active: false }); return 0; }

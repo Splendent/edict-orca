@@ -1,6 +1,6 @@
 {
   "name": "edict-orca",
-  "version": "0.3.0-beta.1",
+  "version": "0.3.0-beta.2",
   "private": true,
   "description": "Manually enabled, conversation-scoped Edict workflow for Orca",
   "repository": {
@@ -20,7 +20,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs && node --check src/orca.mjs && node --check src/schedule.mjs && node --check src/ranges.mjs"
+    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs && node --check src/orca.mjs && node --check src/schedule.mjs && node --check src/ranges.mjs && node --check src/update.mjs"
   },
   "license": "MIT"
 }
