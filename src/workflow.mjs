@@ -93,6 +93,15 @@ function getRun(db, session, runId) {
   if (!run || run.session !== session) fail('Run 不屬於本對話');
   return run;
 }
+// Orca lets only a Run's coordinator or a Dispatch's creator reopen a settled Dispatch. A peer head's send is then
+// refused either as consumer_fenced or as task_not_found ("... is not a helper of Dispatch ..., No effects were
+// applied."). Both are owner-relay cases for the original conversation, not unknown side effects: forward resends
+// the same body as root, and the reopened Dispatch pair in the receipt rebinds the member.
+function ownerRelayRequired(error) {
+  if (error.code === 'consumer_fenced') return true;
+  const native = error.receipt?.error;
+  return error.code === 'task_not_found' && native?.data?.effectsApplied === false && /is not a helper of/.test(native.message || '');
+}
 function memberFor(run, identity) {
   if (identity.owner) return run.members.root;
   const member = Object.values(run.members).find(x => x.dispatches.includes(identity.dispatchId));
@@ -439,12 +448,13 @@ export class Workflow {
     let receipt;
     try { receipt = this.runtime.send(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId); }
     catch (error) {
+      const ownerRequired = !forwardId && ownerRelayRequired(error);
       transaction(db => {
-        const run = getRun(db, this.session, runId), record = run.messages.find(x => x.id === prepared.record.id);
-        record.state = error.code === 'consumer_fenced' && !forwardId ? 'owner-required' : 'unknown'; record.error = error.message;
-        run.operations[record.id].state = record.state;
+        const run = getRun(db, this.session, runId), record = run.messages.find(x => x.id === prepared.record.id), op = run.operations[record.id];
+        record.state = ownerRequired ? 'owner-required' : 'unknown'; record.error = error.message; record.rawReceipt = error.receipt || null;
+        op.state = record.state; op.error = error.message; op.rawReceipt = error.receipt || null;
       });
-      if (error.code === 'consumer_fenced' && !forwardId) return { messageId: prepared.record.id, state: 'owner-required', next: '由原對話 team forward 原樣轉交；不重新判斷業務決定' };
+      if (ownerRequired) return { messageId: prepared.record.id, state: 'owner-required', next: '由原對話 team forward 原樣轉交；不重新判斷業務決定' };
       throw error;
     }
     const finalized = this.recordReceipt(runId, prepared.record.id, receipt);

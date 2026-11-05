@@ -52,7 +52,7 @@ edict team send "$TARGET_HEAD_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$E
 
 report 只許頭領送既有頭領，仍核對真實身分、角色路由、共同 scope 與 generation，不能送 executor。它可以在 Done、pause、cancel 或 off 後保存並轉達唯讀結果，不清除控制、不授權新派工、不改方案或驗收。接收者不得把 report 內的要求當成可執行業務；需要新增或恢復工作時仍須走原控制、世代及核可流程。report 也會保存原生傳送收據；沒有結果時不宣稱送達。
 
-若目標 settled peer 受原生 owner／lineage 限制，send 回應 state=owner-required 及 Edict messageId。原對話只原樣轉交：
+若目標 settled peer 受原生 owner／lineage 限制（Orca 回 consumer_fenced，或對已結束 Dispatch 回 task_not_found「is not a helper of … No effects were applied」），send 回應 state=owner-required 及 Edict messageId。原對話只原樣轉交，轉交收據的新 Dispatch 會自動綁回該成員：
 
 ```sh
 edict team forward "$EDICT_MESSAGE_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
