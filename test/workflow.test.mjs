@@ -100,6 +100,22 @@ test('head handoff keeps the assignment visible on its existing Dispatch', t => 
   assert.equal(head.assignment, 'W-001');
 });
 
+test('a design-only item closes on its approved plan without an implementation result', t => {
+  const f = fixture(t);
+  f.root(); f.w.add('run-test', { id: 'W-002', title: 'Design only', requirement: 'Write a design table', reads: ['src'], writes: [], resources: [], acceptance: ['Design reviewed'] });
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', 'W-002', { generation: 1, description: 'Design table for three skills', reads: ['src'], writes: [], acceptance: ['Design reviewed'] });
+  f.w.launch('run-test', 'menxia', 'head', 'W-002', { spec: 'Review W-002', generation: 1 });
+  f.as(f.menxia);
+  assert.throws(() => f.w.review('run-test', 'W-002', { generation: 1, kind: 'closure-confirmation', digest: proposal.digest, verdict: 'approved', evidence: [f.proof] }), /設計型工作缺少已核可的方案/);
+  f.w.review('run-test', 'W-002', { generation: 1, kind: 'plan-approval', digest: proposal.digest, verdict: 'approved', evidence: [f.proof] });
+  assert.throws(() => f.w.review('run-test', 'W-002', { generation: 1, kind: 'closure-confirmation', digest: 'wrong', verdict: 'approved', evidence: [f.proof] }), /摘要不符/);
+  f.w.review('run-test', 'W-002', { generation: 1, kind: 'closure-confirmation', digest: proposal.digest, verdict: 'approved', evidence: [f.proof] });
+  assert.equal(f.w.run('run-test').items['W-002'].done, true);
+  // An item that authorizes writes still needs a delivered result.
+  assert.throws(() => f.w.review('run-test', 'W-001', { generation: 1, kind: 'closure-confirmation', digest: f.proposal.digest, verdict: 'approved', evidence: [f.proof] }), /缺少有效方案、完整交付或成果/);
+});
+
 test('native-bound head hierarchy completes plan, independent acceptance and Menxia closure', t => {
   const f = fixture(t), started = f.launch();
   const file = path.join(f.project, 'src/result.txt'); fs.writeFileSync(file, 'delivered');
