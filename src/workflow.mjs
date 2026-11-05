@@ -344,8 +344,23 @@ export class Workflow {
     }
     return this.recordReceipt(runId, op.id, receipt);
   }
+  // Orca delivers a continuation to an executor whose follow-up Dispatch is still open as a plain message: the
+  // receipt names the target only as message.to_handle = "dispatch:<id>" and carries no Task pair. Resolve that
+  // Dispatch natively so the member rebinds to it; anything unverifiable stays message-only (→ unknown).
+  resolveDeliveryTarget(op, receipt) {
+    if (!op || op.operationKind !== 'continuation' || op.position !== 'executor') return receipt;
+    if (receipt?.dispatchId !== undefined || receipt?.taskId !== undefined) return receipt;
+    const target = /^dispatch:(.+)$/.exec(receipt?.message?.to_handle || '');
+    if (!target) return receipt;
+    try {
+      const dispatch = this.runtime.dispatch(target[1]);
+      if (dispatch.runId !== op.runId) return receipt;
+      return { ...receipt, dispatchId: dispatch.id, taskId: dispatch.taskId, runId: dispatch.runId };
+    } catch { return receipt; }
+  }
   recordReceipt(runId, operationId, receipt) {
     const current = this.run(runId).operations[operationId];
+    receipt = this.resolveDeliveryTarget(current, receipt);
     let root = current?.root, rootError;
     if (current?.worktree === 'new-child' && !root) {
       try { root = this.runtime.worktreeRoot(receipt); } catch (error) { rootError = error.message; }
@@ -486,6 +501,9 @@ export class Workflow {
       if (dispatch.id !== receipt.dispatchId || dispatch.taskId !== receipt.taskId || dispatch.runId !== runId) fail('原生接受 checkpoint 與 Dispatch 的 Run 或 Task 不符');
       receipt = { ...receipt, runId: dispatch.runId };
     }
+    // A message-only receipt was already saved as unknown; re-finalize it so a delivery target that resolves now
+    // (the follow-up Dispatch Orca delivered to) can bind the member without resending anything.
+    if (!receipt && op.state === 'unknown' && op.receipt) receipt = op.receipt;
     if (receipt) return this.recordReceipt(runId, operationId, receipt);
     return { request, operationId, state: op.state, next: '原生結果尚未核對；保留占用，不重新派工' };
   }
