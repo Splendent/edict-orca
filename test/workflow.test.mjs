@@ -350,6 +350,41 @@ test('a peer send refused as not-a-helper of a settled dispatch becomes owner-re
   assert.equal(run.operations[first.messageId].state, 'forwarded');
 });
 
+test('a continuation delivered to an executor\'s open follow-up rebinds the member from the delivery target', t => {
+  const f = fixture(t), started = f.launch();
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.dispatch = id => ({ id, taskId: 'follow-task', runId: 'run-test' });
+  f.runtime.send = () => ({ message: { id: 'msg-follow', run_id: 'run-test', to_handle: 'dispatch:follow-up' } });
+  const sent = f.w.message('run-test', started.member.id, 'W-001', 'Repair the report', undefined, 1);
+  const run = f.w.run('run-test'), member = run.members[started.member.id];
+  assert.equal(member.dispatchId, 'follow-up');
+  assert.ok(member.dispatches.includes('follow-up'));
+  assert.equal(run.operations[sent.id].state, 'accepted');
+  assert.equal(run.operations[sent.id].taskId, 'follow-task');
+});
+
+test('a message-only delivery to another Run or an unresolvable dispatch stays unknown', t => {
+  const f = fixture(t), started = f.launch();
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.dispatch = () => { throw new Error('unverified'); };
+  f.runtime.send = (runId, dispatchId, body) => { f.runtime.calls.push({ dispatchId, body }); return { message: { id: 'msg-follow', run_id: 'run-test', to_handle: 'dispatch:follow-up' } }; };
+  const sent = f.w.message('run-test', started.member.id, 'W-001', 'Repair the report', undefined, 1);
+  let run = f.w.run('run-test');
+  assert.equal(run.operations[sent.id].state, 'unknown');
+  assert.equal(run.members[started.member.id].dispatchId, started.member.dispatchId);
+  // Once the Dispatch can be verified, recover re-finalizes the stored receipt without resending.
+  f.runtime.dispatch = id => ({ id, taskId: 'follow-task', runId: 'run-test' });
+  f.runtime.request = () => ({ state: 'absent' });
+  const recovered = f.w.recover('run-test', sent.id);
+  run = f.w.run('run-test');
+  assert.equal(recovered.confirmed, true);
+  assert.equal(run.members[started.member.id].dispatchId, 'follow-up');
+  assert.equal(run.operations[sent.id].state, 'accepted');
+  assert.equal(f.runtime.calls.filter(x => x.body === 'Repair the report').length, 1);
+});
+
 test('a plain task_not_found without the helper refusal stays unknown', t => {
   const f = fixture(t), started = f.launch();
   f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
