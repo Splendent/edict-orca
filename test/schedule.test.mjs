@@ -39,6 +39,7 @@ function workflowFixture(t) {
     },
     workers(){return this.rows;},
     send(runId,dispatchId,body,requestId){this.calls.push({kind:'send',runId,dispatchId,body,requestId});return this.receipt??{messageId:'message-live'};},
+    rename(runId,dispatchId,title){return {state:'applied',handle:`term_${dispatchId}`,title};},
   };
   const w=new Workflow(id,runtime);w.open('Test scoped messages');
   w.launch(run,'menxia','head',undefined,{spec:'Wait for a legitimate review scope'});
@@ -189,7 +190,8 @@ test('a live scoped message saves its receipt without inventing a new Dispatch',
   assert.equal(Object.keys(after.operations).length,Object.keys(before.operations).length+1);
   const originalDispatches=new Set(Object.values(before.operations).map(x=>x.dispatchId).filter(Boolean));
   for(const op of Object.values(after.operations))if(op.dispatchId)assert.ok(originalDispatches.has(op.dispatchId));
-  assert.deepEqual(after.members[f.menxia.id],before.members[f.menxia.id]);
+  assert.deepEqual({...after.members[f.menxia.id],presentation:undefined},{...before.members[f.menxia.id],presentation:undefined});
+  assert.match(after.members[f.menxia.id].presentation.label,/侍中.*W-001 Work/);
   assert.throws(()=>f.w.message(run,'other-session-member','W-001','No access',undefined,1),/目標成員/);
 });
 
