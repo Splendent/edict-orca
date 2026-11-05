@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
-import { Workflow, assertWorkflowOwner, setWorkflowEnabled } from '../src/workflow.mjs';
+import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } from '../src/workflow.mjs';
 import { activate, deactivate } from '../src/session.mjs';
 import { defaults } from '../src/config.mjs';
 
@@ -29,6 +29,7 @@ function fixture(t) {
       return { dispatchId, taskId, runId };
     },
     workers() { return this.rows; },
+    rename(runId, dispatchId, title) { return { state: 'applied', handle: `term_${dispatchId}`, title }; },
     stop(dispatchId) { this.rows.find(x => x.dispatchId === dispatchId).state = 'stopped'; return { dispatchId, state: 'stopped' }; },
     send(runId, dispatchId, body, requestId) { this.calls.push({ dispatchId, body, requestId }); return { messageId: 'message-test' }; },
   };
@@ -53,6 +54,51 @@ function fixture(t) {
   as(bingbu);
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
+
+test('delegation names and status expose all subordinate assignments and cross-worktree locations', t => {
+  const f = fixture(t);
+  const first = f.launch('W-001', { title: '冰霜特效', reads: ['src/frost'], writes: ['src/frost'], worktree: `path:${f.project}` });
+  const second = f.launch('W-001', { title: '傷害數值', reads: ['src/damage'], writes: ['src/damage'] });
+  assert.match(first.presentation.label, /兵部郎中.*W-001 冰霜特效.*←兵部尚書/);
+  assert.notEqual(first.presentation.label, second.presentation.label);
+  assert.match(f.runtime.calls.at(-1).options.title, /兵部郎中.*傷害數值/);
+  const tree = workflowStatus('codex:workflow')[0].hierarchy[0];
+  const shangshu = tree.children.find(x => x.role === 'shangshu');
+  const bingbu = shangshu.children.find(x => x.role === 'bingbu');
+  assert.equal(bingbu.memberId, f.bingbu.id);
+  assert.deepEqual(bingbu.children.map(x => x.assignment), ['冰霜特效', '傷害數值']);
+  assert.equal(bingbu.children[0].supervisorId, f.bingbu.id);
+  assert.equal(bingbu.children[0].worktree, f.project);
+  assert.equal(bingbu.children[0].workerState, null);
+  f.root(); f.w.sync('run-test');
+  const synced = f.w.show('run-test').hierarchy[0].children.find(x => x.role === 'shangshu').children.find(x => x.role === 'bingbu').children[0];
+  assert.equal(synced.workerState, 'ready');
+  assert.ok(synced.observedAt);
+});
+
+test('presentation failure preserves accepted work and sync retries only presentation', t => {
+  const f = fixture(t); f.runtime.rename = () => { throw new Error('UI unavailable'); };
+  const started = f.launch('W-001', { title: '冰霜特效' });
+  assert.equal(started.confirmed, true);
+  assert.equal(started.operation.state, 'accepted');
+  assert.equal(started.presentation.state, 'unconfirmed');
+  const starts = f.runtime.counter;
+  let renamed = 0;
+  f.runtime.rename = () => { renamed++; return { state: 'applied' }; };
+  f.root(); f.w.sync('run-test');
+  assert.equal(f.runtime.counter, starts);
+  assert.equal(f.w.run('run-test').members[started.member.id].presentation.state, 'applied');
+  const attempts = renamed; f.w.sync('run-test');
+  assert.equal(renamed, attempts);
+});
+
+test('head handoff keeps the assignment visible on its existing Dispatch', t => {
+  const f = fixture(t); f.as(f.zhongshu);
+  f.w.message('run-test', f.shangshu.id, 'W-001', 'Dispatch the approved work', undefined, 1);
+  const head = workflowStatus('codex:workflow')[0].hierarchy[0].children.find(x => x.role === 'shangshu');
+  assert.equal(head.work, 'W-001');
+  assert.equal(head.assignment, 'W-001');
+});
 
 test('native-bound head hierarchy completes plan, independent acceptance and Menxia closure', t => {
   const f = fixture(t), started = f.launch();

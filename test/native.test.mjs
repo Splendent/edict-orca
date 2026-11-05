@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { NativeRuntime } from '../src/native.mjs';
 
 // DTOs follow Orca 1.4.249 --json --full result shapes. No native work runs here.
@@ -15,6 +18,18 @@ function runtime(...responses) {
   return { native, calls };
 }
 const runId = 'run-example';
+
+test('native calls request full records only for orchestration commands', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-native-flags-'));
+  const command = path.join(dir, 'orca-fixture');
+  fs.writeFileSync(command, '#!/usr/bin/env node\nconsole.log(JSON.stringify({ok:true,result:{argv:process.argv.slice(2)}}));\n', { mode: 0o755 });
+  const previous = process.env.ORCA_CLI_COMMAND; process.env.ORCA_CLI_COMMAND = command;
+  t.after(() => { if (previous === undefined) delete process.env.ORCA_CLI_COMMAND; else process.env.ORCA_CLI_COMMAND = previous; fs.rmSync(dir, { recursive: true, force: true }); });
+  const native = new NativeRuntime();
+  assert.deepEqual(native.call(['orchestration', 'worker-show']).argv, ['orchestration', 'worker-show', '--json', '--full']);
+  assert.deepEqual(native.call(['terminal', 'show']).argv, ['terminal', 'show', '--json']);
+  assert.deepEqual(native.call(['worktree', 'show']).argv, ['worktree', 'show', '--json']);
+});
 function worker(id, state = 'succeeded') {
   return { dispatchId: id, taskId: `task-${id}`, runId, workerState: state,
     dispatchStatus: state === 'succeeded' ? 'completed' : 'dispatched',
@@ -142,4 +157,64 @@ test('request preserves pending accepted checkpoints and completed receipts for 
   const { native } = runtime(pending, completed);
   assert.equal(native.request('request-example'), pending);
   assert.equal(native.request('request-example'), completed);
+});
+
+function renameFixture() {
+  return { detail: { dispatch: dispatch({ assigneeHandle: 'term_worker', assigneePaneKey: 'tab-worker:leaf-worker' }),
+    worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker' } },
+    terminal: { handle: 'term_worker', tabId: 'tab-worker', leafId: 'leaf-worker' } };
+}
+const inventory = terminals => ({ terminals, truncated: false, visualLayouts: [{ root: { tabs: terminals.map(row => ({ tabId: row.tabId, panes: row })) } }] });
+
+test('rename uses a verified worker handle and changes a dedicated tab without dispatching work', () => {
+  const { detail, terminal } = renameFixture(), title = '兵部郎中｜W-001 冰霜特效｜←兵部尚書';
+  const { native, calls } = runtime(detail, inventory([terminal]), { rename: { ...terminal, title } });
+  assert.equal(native.rename(runId, 'ctx-example', title).target, 'tab');
+  assert.deepEqual(calls.at(-1).args, ['terminal', 'rename', '--terminal', terminal.handle, '--title', title]);
+  assert.equal(calls.some(x => x.args.includes('worker-start') || x.args.includes('send')), false);
+});
+
+test('rename changes only its pane when another agent shares the tab', () => {
+  const { detail, terminal } = renameFixture(), title = '兵部郎中｜效能查證';
+  const other = { handle: 'term_other', tabId: terminal.tabId, leafId: 'leaf-other' };
+  const { native, calls } = runtime(detail, inventory([terminal, other]), { paneTitle: { ...terminal, title } });
+  assert.equal(native.rename(runId, 'ctx-example', title).target, 'pane');
+  assert.equal(calls.at(-1).args[1], 'set-pane-title');
+  assert.equal(calls.some(x => x.args[1] === 'rename'), false);
+});
+
+test('rename refuses cross-Run, mismatched handles, partial inventory and mismatched pane identity', () => {
+  const { detail, terminal } = renameFixture();
+  assert.throws(() => runtime({ ...detail, dispatch: { ...detail.dispatch, runId: 'other' } }).native.rename(runId, 'ctx-example', 'title'), /身分未確認/);
+  assert.throws(() => runtime({ ...detail, worker: { ...detail.worker, agentTerminalHandle: 'term_other' } }).native.rename(runId, 'ctx-example', 'title'), /身分未確認/);
+  assert.throws(() => runtime(detail, { ...inventory([terminal]), truncated: true }).native.rename(runId, 'ctx-example', 'title'), /未確認/);
+  assert.throws(() => runtime(detail, inventory([{ ...terminal, leafId: 'different' }])).native.rename(runId, 'ctx-example', 'title'), /未確認/);
+});
+
+test('rename reports agents without terminal tabs as unavailable without changing their launch surface', () => {
+  const { detail } = renameFixture(); detail.dispatch.assigneeHandle = detail.worker.agentTerminalHandle = 'structured_agent';
+  const { native, calls } = runtime(detail, inventory([]));
+  assert.equal(native.rename(runId, 'ctx-example', 'title').state, 'unavailable');
+  assert.equal(calls.length, 2);
+});
+
+test('a hidden worker gets a visible tab and returns to its caller before naming', () => {
+  const { detail, terminal } = renameFixture(), title = '兵部郎中｜冰霜特效';
+  const { native, calls } = runtime(detail, { ...inventory([]), terminals: [terminal] }, { terminal: { handle: 'term_caller' } },
+    { focus: { handle: terminal.handle, navigated: true } }, inventory([terminal]),
+    { focus: { handle: 'term_caller', navigated: true } }, { rename: { ...terminal, title } });
+  const result = native.rename(runId, 'ctx-example', title);
+  assert.equal(result.reveal.navigated, true);
+  assert.equal(result.restoreWarning, null);
+  assert.deepEqual(calls.filter(x => x.args[1] === 'switch').map(x => x.args.at(-1)), [terminal.handle, 'term_caller']);
+  assert.equal(calls.filter(x => x.args[1] === 'rename').length, 1);
+});
+
+test('a failed reveal still returns to its caller and never creates another worker', () => {
+  const { detail } = renameFixture();
+  const { native, calls } = runtime(detail, { ...inventory([]), terminals: [{ handle: 'term_worker' }] }, { terminal: { handle: 'term_caller' } },
+    { focus: { handle: 'term_worker', navigated: false } }, { focus: { handle: 'term_caller', navigated: true } });
+  assert.throws(() => native.rename(runId, 'ctx-example', 'title'), /未確認代理分頁/);
+  assert.equal(calls.at(-1).args.at(-1), 'term_caller');
+  assert.equal(calls.some(x => x.args[1] === 'worker-start' || x.args[1] === 'rename'), false);
 });

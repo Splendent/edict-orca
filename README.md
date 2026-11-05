@@ -35,7 +35,7 @@
 1. 取得已發布版本並檢查來源。
 
    ```sh
-   git clone --branch v0.4.0-beta.2 https://github.com/Splendent/edict-orca.git
+   git clone --branch v0.4.0-beta.4 https://github.com/Splendent/edict-orca.git
    cd edict-orca
    node scripts/install-local.mjs --dry-run
    ```
@@ -47,7 +47,7 @@
    node bin/edict.mjs --version
    ```
 
-   預期版本為 `edict-orca 0.4.0-beta.2`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
+   預期版本為 `edict-orca 0.4.0-beta.4`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
 
 3. 在 Orca 的 **Settings → Orchestration → Nested worker depth** 設定至少 `3`。
 4. 在要工作的對話執行 `/edict init`；Codex 執行 `$edict init`。依提示選擇代理與模型，完成後查詢 `/edict status` 或 `$edict status`。
@@ -93,6 +93,14 @@ flowchart TB
 必要實作須交付有效成果並結束原生執行，再經刑部驗收及門下結案才進入 Done。暫停關閉新准入；已送出的操作仍需核對。取消須等原生停止或結束證據成立，才可宣稱取消完成。
 
 詳細授權、世代、成果及決策資料見 [角色與資料契約](skills/edict/references/workflow.md)。
+
+### 查看下層派工
+
+分頁名稱顯示職位、具體子工作、直接上級與成員短碼，例如 `兵部郎中｜W-001 冰霜特效｜←兵部尚書｜a1b2c3d4`。終端已存在但缺少可見版面時，Edict 透過 Orca 顯示該分頁，再返回呼叫者分頁；共用分頁時只命名該代理面板。顯示失敗會另行記錄，不重新派工。
+
+詢問 `/edict status` 或 `$edict status` 時，代理依最後同步的 `hierarchy` 列出頭領與所有下屬、負責工作、原生狀態與工作樹。未同步狀態須明列未確認，跨工作樹的下屬也會保留在派工關係中。
+
+Orca 側邊欄仍依工作樹分組，Edict 的派工樹由狀態回報呈現。沒有可用終端分頁的代理保留原啟動方式，並標示顯示功能不可用。
 
 ## 使用範例
 
