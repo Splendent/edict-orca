@@ -18,6 +18,10 @@ root 建立三省是控制啟動，不代替送審或核可。三省的原生 cr
 
 ## 分工與交接
 
+每次委派以 JSON 的 `title` 寫明該執行代理的具體子工作，例如「冰霜特效原生格比對」；不要只填「處理任務」。分頁名稱使用職位、工作、直接上級與成員短碼。已確認原生派工後才處理顯示；顯示或改名失敗不重派工作。缺少可見版面的終端會先顯示既有分頁，再返回呼叫者；共用分頁只改該代理面板。
+
+使用者問派工進度或有哪些下屬時，按已知 Run `sync` 核對原生狀態，再將 `status`／`work show` 的 `hierarchy` 轉成完整派工樹。逐層列頭領及所有下屬的 assignment、workerState、worktree 與可定位的 Dispatch；跨工作樹及結果未確認的下屬也須列出，不能只報頭領或一項工程進度。`observedAt` 是最後同步時間；未同步或為 null 不得改稱正在執行。額外保留 presentation 的不可見、未確認及返回分頁警告。
+
 同一工作項目的每份 plan、review、帶 work 的 ensure／delegate／team send 都明確帶目前 `generation`。新增項目從 1 開始；取消後明確重做才產生新代，不把 revision 當 generation。`work result` 以原 operation ID 綁定其世代，JSON 可附 generation 供交付說明，但不能用它改變原委派。
 
 六部跨部門問題交尚書轉送，不能直接命令其他部門。執行代理只向自己的頭領回報／提問，不再開下層。正式訊息用 `team send <目標memberId>`；目標原生身分已 settled 且回應 owner-required 時，原對話用 `team forward <messageId>` 原樣代送，不重寫決策。完整規則見 [執行與恢復](scheduling.md)。

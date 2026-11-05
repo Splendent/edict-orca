@@ -12,6 +12,42 @@ const departments = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 const fail = message => { throw new Error(message); };
 const validId = value => typeof value === 'string' && value.trim().length > 0;
+const displayText = value => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').replace(/\s+/gu, ' ').trim().slice(0, 72);
+function memberSummary(run, member) {
+  const operations = Object.values(run.operations).filter(x => x.memberId === member.id);
+  const nativeOperation = operations.findLast(x => x.dispatchId && x.dispatchId === member.dispatchId);
+  const op = operations.findLast(x => x.dispatchId && x.dispatchId === member.dispatchId || x.state === 'message-delivered') || operations.at(-1);
+  const item = run.items[op?.work], supervisor = run.members[member.supervisor];
+  const assignment = displayText(op?.title || item?.title || (member.id === 'root' ? '需求與工作控制' : '協調與交接'));
+  const title = member.title || ROLES[member.role]?.name || member.role;
+  const label = `${title}｜${op?.work ? `${displayText(op.work)} ` : ''}${assignment}${supervisor ? `｜←${supervisor.title || ROLES[supervisor.role]?.name}` : ''}｜${member.id.slice(0, 8)}`;
+  return { memberId: member.id, role: member.role, position: member.position, title, label, assignment,
+    supervisorId: member.supervisor || null, work: op?.work || null, scopes: member.scopes,
+    dispatchId: member.dispatchId || null, worktree: nativeOperation?.native?.projection?.workspace?.id || op?.root || op?.worktree || run.project,
+    operationState: op?.state || null, workerState: nativeOperation?.native?.state || nativeOperation?.native?.workerState || null,
+    observedAt: nativeOperation?.observedAt || null, retired: member.retired || false, presentation: member.presentation || null };
+}
+function hierarchy(run, scopes) {
+  const members = Object.values(run.members);
+  let visible = members;
+  if (scopes) {
+    const ids = new Set(members.filter(member => member.scopes.some(id => scopes.includes(id))).map(member => member.id));
+    for (const id of ids) {
+      let parent = run.members[id]?.supervisor;
+      while (parent && !ids.has(parent)) { ids.add(parent); parent = run.members[parent]?.supervisor; }
+    }
+    visible = members.filter(member => ids.has(member.id));
+    run = { ...run, operations: Object.fromEntries(Object.entries(run.operations).filter(([, op]) => !op.work || scopes.includes(op.work))) };
+  }
+  const nodes = visible.map(member => ({ ...memberSummary(run, member), scopes: scopes ? member.scopes.filter(id => scopes.includes(id)) : member.scopes, children: [] }));
+  const byId = new Map(nodes.map(node => [node.memberId, node]));
+  const roots = [];
+  for (const node of nodes) {
+    const parent = byId.get(node.supervisorId);
+    if (parent) parent.children.push(node); else roots.push(node);
+  }
+  return roots;
+}
 const text = (value, label) => typeof value === 'string' && value.trim() ? value : fail(`缺少 ${label}`);
 const list = (value, label) => Array.isArray(value) && value.every(x => typeof x === 'string' && x.trim()) ? [...new Set(value)] : fail(`${label} 必須是非空字串陣列`);
 const subset = (a, b) => a.every(x => b.includes('*') || b.some(y => x === y || x.startsWith(y + '/')));
@@ -320,7 +356,8 @@ export class Workflow {
       const session = requireActive(this.session), settings = resolveSettings(session.config, role, position);
       const op = { id: randomUUID(), requestId: randomUUID(), memberId: member.id, actorId: actor.id, role, position, runId, work: work || null, generation: item?.generation || 0,
         revision: item?.revision || 0, writes, reads, resources, worktree, root, ...shape, settings, state: 'submitted', sequence: ++db.sequence,
-        spec: text(data.spec, 'spec'), phase, operationKind: 'start', replaces: replaces?.id || null, planDigest: item?.plan?.digest || null, controlRevision: run.controlRevision };
+        spec: text(data.spec, 'spec'), title: data.title === undefined ? null : displayText(text(data.title, 'title')),
+        phase, operationKind: 'start', replaces: replaces?.id || null, planDigest: item?.plan?.digest || null, controlRevision: run.controlRevision };
       run.members[member.id] = member; run.operations[op.id] = op;
       if (op.phase === 'implementation') item.authors.push(member.id);
       return { operation: op, member };
@@ -332,7 +369,7 @@ export class Workflow {
     const op = prepared.operation;
     const spec = workerSpec(role, op.spec, this.run(runId).project, { position, session: this.session, runId, memberId: op.memberId, work, phase: op.phase, stateHome: home() });
     let receipt;
-    try { receipt = this.runtime.start(runId, op.settings, spec, { worktree: op.worktree, title: prepared.member.title }, op.requestId); }
+    try { receipt = this.runtime.start(runId, op.settings, spec, { worktree: op.worktree, title: memberSummary(this.run(runId), prepared.member).label }, op.requestId); }
     catch (error) {
       transaction(db => {
         const run = getRun(db, this.session, runId), stored = run.operations[op.id];
@@ -357,7 +394,23 @@ export class Workflow {
       return finalizeReceipt(run, operationId, receipt);
     });
     if (result.cancelPending) result.stops = this.drainStops(runId);
+    if (result.confirmed && result.member) result.presentation = this.present(runId, result.member.id);
     return result;
+  }
+  present(runId, memberId) {
+    const run = this.run(runId), member = run.members[memberId];
+    if (!member?.dispatchId) return null;
+    const { label } = memberSummary(run, member);
+    if (member.presentation?.state === 'applied' && member.presentation.dispatchId === member.dispatchId && member.presentation.label === label) return member.presentation;
+    let result;
+    try { result = this.runtime.rename(runId, member.dispatchId, label); }
+    catch (error) { result = { state: 'unconfirmed', error: error.message }; }
+    const presentation = { ...result, label, dispatchId: member.dispatchId };
+    transaction(db => {
+      const current = getRun(db, this.session, runId).members[memberId];
+      if (current.dispatchId === member.dispatchId) current.presentation = presentation;
+    });
+    return presentation;
   }
   result(runId, operationId, data) {
     const files = evidence(data.files);
@@ -438,7 +491,7 @@ export class Workflow {
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
         role: target.role, position: target.position, actorId: actor.id, runId, requestId: record.requestId,
-        settings: previous.settings, phase: previous.phase, spec: record.body, worktree: previous.worktree, root: previous.root,
+        settings: previous.settings, phase: previous.phase, spec: record.body, title: previous.title, worktree: previous.worktree, root: previous.root,
         reads: claims.reads, writes: claims.writes, resources: claims.resources, physicalReads: claims.physicalReads, physicalWrites: claims.physicalWrites,
         planDigest: item?.plan?.digest || null, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0,
         state: 'submitted', sequence: record.sequence, result: null, receipt: null };
@@ -496,12 +549,14 @@ export class Workflow {
         const id = row.dispatchId || row.id;
         for (const op of Object.values(run.operations).filter(x => x.dispatchId === id)) {
           op.native = row;
+          op.observedAt = new Date().toISOString();
           if (executionSettled(row)) { op.state = 'settled'; op.stopRequested = false; }
         }
       }
     }, { active: false });
     const stops = this.drainStops(runId);
-    return { ...this.show(runId), stops };
+    const presentations = Object.values(this.run(runId).members).filter(member => member.dispatchId).map(member => this.present(runId, member.id));
+    return { ...this.show(runId), stops, presentations };
   }
   drainStops(runId) {
     const pending = transaction(db => {
@@ -535,12 +590,12 @@ export class Workflow {
     const items = Object.values(run.items).map(item => ({ ...item,
       status: item.done ? 'Done' : item.cancelled || item.paused || run.paused || run.cancelled ? 'Blocked' : item.result || item.plan && !approval(run, item) ? 'Review' : outstanding(run, item).length ? 'WIP' : 'Todo',
       controlResult: item.cancelled || run.cancelled ? outstanding(run, item).some(x => x.position === 'executor') || run.messages.some(x => x.work === item.id && ['submitted', 'unknown', 'forwarding'].includes(x.state)) ? '取消已受理，仍有在途或未確認工作' : '取消已完成' : null }));
-    return { ...run, items };
+    return { ...run, items, hierarchy: hierarchy(run) };
   }
   show(runId) {
     const run = this.run(runId), actor = memberFor(run, this.runtime.identity(runId)), view = this.view(run);
     if (actor.scopes.includes('*')) return view;
-    return { ...view, items: view.items.filter(x => actor.scopes.includes(x.id)), operations: Object.fromEntries(Object.entries(view.operations).filter(([, x]) => actor.scopes.includes(x.work))) };
+    return { ...view, hierarchy: hierarchy(run, actor.scopes), items: view.items.filter(x => actor.scopes.includes(x.id)), operations: Object.fromEntries(Object.entries(view.operations).filter(([, x]) => actor.scopes.includes(x.work))) };
   }
 }
 
@@ -559,5 +614,6 @@ export function setWorkflowEnabled(session, enabled, runtime = new NativeRuntime
 export function workflowStatus(session) {
   return Object.values(readDb().runs).filter(x => x.session === session).map(x => ({ runId: x.id, paused: x.paused, cancelled: x.cancelled,
     teams: Object.values(x.members).filter(m => m.position === 'head').map(m => ({ role: m.role, memberId: m.id, dispatchId: m.dispatchId })),
+    hierarchy: hierarchy(x),
     items: Object.values(x.items).map(i => ({ id: i.id, title: i.title, done: i.done, paused: i.paused, cancelled: i.cancelled, generation: i.generation })) }));
 }

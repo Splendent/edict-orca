@@ -150,6 +150,7 @@ edict team ensure xingbu --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --w
 {
   "generation": 1,
   "spec": "依目前核可方案修改 src/result.txt，執行相關測試，提交實際成果與測試報告，不自行擴大範圍。",
+  "title": "指定功能實作與測試",
   "phase": "implementation",
   "reads": ["src"],
   "writes": ["src/result.txt"],
