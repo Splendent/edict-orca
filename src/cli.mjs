@@ -3,59 +3,77 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { ROLES, workerSpec } from './roles.mjs';
-import { defaults, validateConfig } from './config.mjs';
+import { defaults, validateConfig, resolveSettings } from './config.mjs';
 import { configure } from './configure.mjs';
 import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult } from './orca.mjs';
 import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
-import { dispatchReady } from './schedule.mjs';
 import { updateInstallation } from './update.mjs';
+import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } from './workflow.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
 const PACKAGE = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
-const HELP = `Edict：在目前對話手動啟用 Orca 協作
+const HELP = `Edict：手動啟用目前對話的三省六部團隊協作（新版 v2 資料）
 
-對話命令（Claude／Cursor）：
-  /edict init     設定角色與模型並啟用目前對話；之後正常交代工作
-  /edict status   顯示此對話啟用狀態、角色模型與 Orca 派工紀錄
-  /edict config   查看／修改此對話設定，不影響其他對話
-  /edict off      停用此對話；不取消已派工作
-  /edict update   更新本機套件並由本對話重新讀取指引；保留現有工作
-  /edict help     顯示說明，不啟用
-Codex 原生技能入口為 $edict init（其他子命令同理）。
+對話命令：init、status、config、off、update、help。Codex 使用 $edict；Claude／Cursor 使用 /edict。
+init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。安裝不啟用對話。
 
-代理操作 CLI：
-  edict init --session <provider:對話識別碼> [--yes] [--agent codex] [--model ID]
-  Cursor 協調者：init --coordinator cursor，待使用者選定原生 Custom Mode 後再加 --mode-confirmed
-  edict init --session <ID> --yes --import-config <舊版config.json>
+設定與查詢：
+  edict init --yes --session <ID> --agent <claude|codex|cursor> [--model <ID>]
   edict status|context|off --session <ID>
-  edict config [set <角色> --agent <claude|codex|cursor> --model <ID> --effort <值>] --session <ID>
-  edict config set <角色> --clear-model|--clear-effort --session <ID>
-  edict dispatch <角色> --spec-file <檔案|-> --session <ID> [--run <ID>] [--dry-run]
-  edict task-create <角色> --spec-file <檔案|-> --run <ID> [--deps <JSON陣列>] --session <ID>
-  edict dispatch <角色> --task <TaskID> --run <ID> --session <ID>
-  edict continue <DispatchID> --spec-file <檔案|-> --session <ID>
-  edict dispatch-ready --plan-file <派工JSON> --session <ID> [--concurrency 3] [--dry-run]
+  edict config set <角色> --position head|executor --agent <代理> [--model <ID>] --session <ID>
+  edict config set <角色> --position head|executor --inherit --session <ID>
   edict doctor --session <ID>
   edict update [--session <ID>]
   edict --version
-  edict roles
-派工選項：--worktree current|<selector>|new-child|new-top-level、--repo、--name、--base-branch、--title
-init 可用 --project 指定工作專案；不寫入專案技能或設定。
-安裝：node scripts/install-local.mjs（每台電腦一次；不啟用對話）
-對話狀態保存在使用者目錄；首次 init 可產生獨立對話識別碼，後續須明確沿用。模型只影響新 worker。`;
+
+原協調者建立 Run 及三省空頭領：
+  edict run open --objective <目標> --session <ID>
+  edict team ensure <zhongshu|menxia|shangshu> --run <RunID> --spec-file <JSON|-> --session <ID>
+
+頭領與執行代理的工作操作：
+  edict work add --run <RunID> --spec-file <JSON|-> --session <ID>
+  edict work plan --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+  edict work show --run <RunID> --session <ID>
+  edict team ensure <角色> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+  edict delegate <角色> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+  edict work result --run <RunID> --operation <ID> --spec-file <JSON|-> --session <ID>
+  edict review record --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+  edict team send <成員ID> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+  edict team forward <交接ID> --run <RunID> --session <ID>
+  edict control pause|resume|cancel|restart --run <RunID> [--work <W-ID>] --session <ID>
+  edict sync --run <RunID> --session <ID>
+  edict recover --run <RunID> --operation <ID> --session <ID>
+
+業務 JSON 必須引用 generation。核可、成果驗收與門下結案分別記錄。
+角色與 --member 不是憑證：權限由原生 Run／Dispatch 與團隊綁定確認。
+控制關閉新准入；在途操作須核對，取消受理不等於所有程序已停止。
+原生三層結構需要 Orca Settings → Orchestration → Nested worker depth 至少 3；不自行改全域設定。
+此版本不轉換舊資料，請使用新的對話狀態；不會清除既有資料。
+`;
 
 function print(value) { console.log(JSON.stringify(value, null, 2)); }
 function settings(config, role, options) {
   if (!ROLES[role]) throw new Error(`未知角色：${role}`);
   if (options.model !== undefined && options['clear-model']) throw new Error('--model 不能與 --clear-model 同用');
   if (options.effort !== undefined && options['clear-effort']) throw new Error('--effort 不能與 --clear-effort 同用');
-  if (!['agent', 'model', 'effort', 'clear-model', 'clear-effort'].some(k => options[k] !== undefined)) throw new Error('請指定要修改的代理、模型或推理強度');
-  const item = config.roles[role];
+  if (!['agent', 'model', 'effort', 'clear-model', 'clear-effort', 'inherit'].some(k => options[k] !== undefined)) throw new Error('請指定要修改的代理、模型或推理強度');
+  if (options.position && !['head', 'executor'].includes(options.position)) throw new Error('position 必須為 head 或 executor');
+  if (options.inherit) {
+    if (!options.position || ['agent', 'model', 'effort', 'clear-model', 'clear-effort'].some(k => options[k] !== undefined)) throw new Error('--inherit 必須單獨搭配 --position');
+    if (config.positionOverrides?.[role]) delete config.positionOverrides[role][options.position];
+    return validateConfig(config);
+  }
+  const item = options.position ? resolveSettings(config, role, options.position) : config.roles[role];
   if (options.agent !== undefined && options.agent !== item.agent) Object.assign(item, { agent: options.agent, model: null, effort: null });
   if (options.model !== undefined) { if (options.model !== item.model) item.effort = null; item.model = options.model; }
   if (options['clear-model']) Object.assign(item, { model: null, effort: null });
   if (options.effort !== undefined) item.effort = options.effort;
   if (options['clear-effort']) item.effort = null;
+  if (options.position) {
+    config.positionOverrides ??= {};
+    config.positionOverrides[role] ??= {};
+    config.positionOverrides[role][options.position] = item;
+  }
   return validateConfig(config);
 }
 async function doctor(id) {
@@ -98,6 +116,7 @@ export async function main(argv) {
     'plan-file': { type: 'string' }, concurrency: { type: 'string' },
     worktree: { type: 'string' }, repo: { type: 'string' }, name: { type: 'string' },
     'base-branch': { type: 'string' }, title: { type: 'string' },
+    work: { type: 'string' }, operation: { type: 'string' }, position: { type: 'string' }, inherit: { type: 'boolean' }, objective: { type: 'string' },
   } });
   const [command, sub, role] = positionals;
   if (options.version) {
@@ -108,17 +127,25 @@ export async function main(argv) {
   if (options.help || !command || command === 'help') { console.log(HELP); return 0; }
   const allowed = {
     init: ['yes', 'session', 'project', 'agent', 'model', 'effort', 'import-config', 'coordinator', 'mode-confirmed'],
-    config: ['session', 'agent', 'model', 'effort', 'clear-model', 'clear-effort'],
+    config: ['session', 'agent', 'model', 'effort', 'clear-model', 'clear-effort', 'position', 'inherit'],
     roles: [], status: ['session'], context: ['session'], off: ['session'], doctor: ['session'],
     dispatch: ['session', 'spec-file', 'task', 'dry-run', 'run', 'worktree', 'repo', 'name', 'base-branch', 'title'],
     'task-create': ['session','spec-file','run','deps','parent','title','dry-run'],
     continue: ['session','spec-file','title','dry-run'],
     'dispatch-ready': ['session','plan-file','concurrency','dry-run'],
     update: ['session'],
+    run: ['session', 'objective'],
+    work: ['session', 'run', 'work', 'spec-file', 'operation'],
+    team: ['session', 'run', 'work', 'spec-file'],
+    delegate: ['session', 'run', 'work', 'spec-file'],
+    review: ['session', 'run', 'work', 'spec-file'],
+    control: ['session', 'run', 'work'],
+    sync: ['session', 'run'],
+    recover: ['session', 'run', 'operation'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
-  if (positionals.length > (command === 'config' ? 3 : ['dispatch','task-create','continue'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
+  if (positionals.length > (['config', 'team'].includes(command) ? 3 : ['dispatch','task-create','continue','run','work','review','control','delegate'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
   if (command === 'roles') { for (const [key, info] of Object.entries(ROLES)) console.log(`${key}\t${info.name}\t${info.duty}`); return 0; }
   if (command === 'update') {
     const supplied = options.session || process.env.EDICT_SESSION_ID || (process.env.CODEX_THREAD_ID ? `codex:${process.env.CODEX_THREAD_ID}` : null);
@@ -133,8 +160,9 @@ export async function main(argv) {
   }
   const id = sessionId(options.session || (command === 'init' && !process.env.EDICT_SESSION_ID && !process.env.CODEX_THREAD_ID ? `conversation:${randomUUID()}` : undefined));
   if (command === 'context') { const text = context(id); if (text) console.log(text); return 0; }
-  if (command === 'status') { print(readSession(id) ?? { session: id, active: false }); return 0; }
+  if (command === 'status') { const state=readSession(id); print(state ? {...state, workflows:workflowStatus(id)} : { session: id, active: false }); return 0; }
   if (command === 'off') {
+    setWorkflowEnabled(id, false);
     const state = deactivate(id);
     print({ session: id, active: false, dispatches: state?.dispatches ?? [], note: '已停用此對話；未取消已派工作。派工紀錄不是即時狀態，需由 Orca 確認是否仍在執行。' });
     return 0;
@@ -151,6 +179,7 @@ export async function main(argv) {
     const project = path.resolve(options.project ?? previous?.project ?? process.cwd());
     if (!fs.statSync(project).isDirectory()) throw new Error(`不是工作目錄：${project}`);
     const config = await configure(previous?.config ?? imported, options);
+    setWorkflowEnabled(id, true);
     const state = activate(id, config, project, { coordinator: options.coordinator, modeConfirmed: options['mode-confirmed'] });
     print({ ...state, note: state.active ? '目前對話已啟用 Edict。接下來直接交代工作，不需每次加命令；其他對話未改動。' : '設定已保存，但尚未啟用。請在 Cursor 原生介面把 Edict 選為此對話的 Custom Mode，確認輸入框顯示模式標記後再完成 init。Orca 的 Cursor CLI 是否支援此介面尚未確認，不可宣稱已啟用。' });
     return 0;
@@ -163,64 +192,64 @@ export async function main(argv) {
       print(state.config); return 0;
     }
     if (sub !== 'set') throw new Error('用法：edict config set <角色> --agent ... --model ...');
+    assertWorkflowOwner(id);
     state.config = settings(state.config, role, options);
     writeSession(state);
-    print({ session: id, active: state.active, role, ...state.config.roles[role], note: '僅影響此對話下一次啟動的 worker，不更換執行中的模型。' });
+    print({ session: id, active: state.active, role, position: options.position || null, ...(options.position ? resolveSettings(state.config, role, options.position) : state.config.roles[role]), note: '僅影響此對話下一次啟動的 worker，不更換執行中的模型。' });
     return 0;
   }
   if (command === 'doctor') return doctor(id);
-  const state = requireActive(id);
-  if (command === 'dispatch-ready') {
-    if (!options['plan-file']) throw new Error('須指定 --plan-file <派工JSON>');
-    const output=await dispatchReady(id,JSON.parse(fs.readFileSync(options['plan-file'],'utf8')),options.concurrency===undefined?3:Number(options.concurrency),options['dry-run']);
-    print(output);
-    return output.results?.some(row=>row.exitCode!==0)?1:0;
+  if (['dispatch', 'task-create', 'dispatch-ready', 'continue'].includes(command)) {
+    throw new Error('新版不提供免核可派工入口；請使用 run、work、team、delegate、review 與 control，並明確指定 --run');
   }
-  if (!!options.task === !!options['spec-file']) throw new Error('須擇一指定 --spec-file <檔案|-> 或 --task <TaskID>');
-  const task = options['spec-file'] ? fs.readFileSync(options['spec-file'] === '-' ? 0 : options['spec-file'], 'utf8') : null;
-  if (task!==null && !task.trim()) throw new Error('任務內容不可空白');
-  const executable = orcaCommand();
-  if (command === 'task-create') {
-    const args=taskArgs(sub,options), spec=workerSpec(sub,task,state.project);
-    if (options['dry-run']) { print({executable,args,spec}); return 0; }
-    const result=runOrca(executable,args,{input:spec}), code=printResult(result);
-    if (code!==0) { console.error('建立 Task 未確認成功，保留原始回應，不得重複建立。'); return code; }
-    try { recordTask(id,JSON.parse(result.stdout),sub,options.run); }
-    catch(error) { return receiptFailure(id,sub,options.run,result.stdout,error); }
-    return 0;
+  const workflow = new Workflow(id);
+  if (command === 'run') {
+    if (sub !== 'open' || !options.objective) throw new Error('用法：run open --objective <工作目標>');
+    print(workflow.open(options.objective)); return 0;
   }
-  if (command === 'continue') {
-    const original=state.dispatches.find(row=>row.dispatchId===sub);
-    if (!original?.runId) throw new Error('只能續辦本對話已保存且具有 Run ID 的 Dispatch');
-    const spec=workerSpec(original.role,task,state.project),args=continueArgs(original,spec,options.title);
-    if (options['dry-run']) { print({executable,args}); return 0; }
-    const result=runOrca(executable,args),code=printResult(result);
-    if (code!==0) { console.error('續辦未確認成功，保留原始回應，不得重送。'); return code; }
-    try { recordContinuation(id,JSON.parse(result.stdout),original); }
-    catch(error) { return receiptFailure(id,original.role,original.runId,result.stdout,error); }
-    return 0;
+  if (!options.run) throw new Error('必須指定原生 --run；不猜選最近工作');
+  function input() {
+    if (!options['spec-file']) throw new Error('須指定 --spec-file <JSON檔案|->');
+    const raw = fs.readFileSync(options['spec-file'] === '-' ? 0 : options['spec-file'], 'utf8');
+    const data = JSON.parse(raw);
+    if (!data || Array.isArray(data) || typeof data !== 'object') throw new Error('工作輸入必須是 JSON 物件');
+    return data;
   }
-  const dispatchOptions = { ...options, run: options.run || state.runId || undefined };
-  if (options.task) taskBinding(state,options.task,sub,dispatchOptions.run);
-  const args = dispatchArgs(state.config, sub, dispatchOptions);
-  const spec = options.task ? undefined : workerSpec(sub, task, state.project);
-  if (options['dry-run']) { print({ executable, args, cwd: process.cwd(), spec }); return 0; }
-  const result = runOrca(executable, args, { input: spec });
-  const code = printResult(result);
-  if (code !== 0) console.error('派工結果未確認或失敗；保留原始回應並讀 Orca recovery-and-cleanup 指南，不得重新派工。');
-  else {
-    try {
-      const receipt=JSON.parse(result.stdout);
-      if (options.task && receipt.result?.taskId!==options.task) throw new Error('派工收據的 Task 與請求不符，結果未確認，不得重複派工');
-      recordDispatch(id, receipt, sub, dispatchOptions.run);
+  if (command === 'work') {
+    if (sub === 'show') { print(workflow.show(options.run)); return 0; }
+    if (sub === 'add') { print(workflow.add(options.run, input())); return 0; }
+    if (sub === 'plan') {
+      if (!options.work) throw new Error('必須指定 --work');
+      print(workflow.plan(options.run, options.work, input())); return 0;
     }
-    catch (error) { return receiptFailure(id,sub,dispatchOptions.run,result.stdout,error); }
+    if (sub === 'result') {
+      if (!options.operation) throw new Error('必須指定 --operation');
+      print(workflow.result(options.run, options.operation, input())); return 0;
+    }
+    throw new Error('work 支援 add、plan、result、show');
   }
-  return code;
-}
-function receiptFailure(id,role,run,stdout,error) {
-  console.error(`Orca 已回覆，但紀錄未保存：${error.message}。保留上方原始收據，不得重複派工。`);
-  try { console.error(`收據已另存：${saveDispatchReceipt(id,role,run,stdout)}。請協調者依收據核對 Orca 並補記紀錄。`); }
-  catch(backupError) { console.error(`收據備份也失敗：${backupError.message}。請保存 stdout 的原始 Orca 收據。`); }
-  return 1;
+  if (command === 'team') {
+    if (sub === 'send') { const data=input(); print(workflow.message(options.run, role, options.work, data.body, undefined, data.generation, data.kind || 'handoff')); return 0; }
+    if (sub === 'forward') { print(workflow.forward(options.run, role)); return 0; }
+    if (sub !== 'ensure' || !role) throw new Error('用法：team ensure <角色> --spec-file <JSON>');
+    const result = workflow.launch(options.run, role, 'head', options.work, input());
+    print(result); return result.confirmed === false ? 1 : 0;
+  }
+  if (command === 'delegate') {
+    const result = workflow.launch(options.run, sub, 'executor', options.work, input());
+    print(result); return result.confirmed === false ? 1 : 0;
+  }
+  if (command === 'review') {
+    if (sub !== 'record' || !options.work) throw new Error('用法：review record --work <ID> --spec-file <JSON>');
+    print(workflow.review(options.run, options.work, input())); return 0;
+  }
+  if (command === 'control') {
+    print(workflow.control(options.run, sub, options.work)); return 0;
+  }
+  if (command === 'sync') { print(workflow.sync(options.run)); return 0; }
+  if (command === 'recover') {
+    if (!options.operation) throw new Error('必須指定 --operation');
+    print(workflow.recover(options.run, options.operation)); return 0;
+  }
+  throw new Error('未支援的工作操作');
 }

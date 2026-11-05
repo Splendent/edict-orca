@@ -7,125 +7,54 @@ import { spawnSync } from 'node:child_process';
 import { defaults } from '../src/config.mjs';
 import { ROOT, activate, readSession, writeSession, recordTask, recordDispatch } from '../src/session.mjs';
 import { validatePlan, selectReady } from '../src/schedule.mjs';
+import { Workflow } from '../src/workflow.mjs';
 
-const id='codex:scheduling-test', run='run-scheduling';
+const id='codex:schedule',run='run-schedule';
 function fixture(t) {
-  const root=fs.mkdtempSync(path.join(os.tmpdir(),'edict-schedule-'));
-  const previous=process.env.EDICT_HOME;
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'edict-ranges-'));
+  const prior=process.env.EDICT_HOME;
   process.env.EDICT_HOME=path.join(root,'state');
-  t.after(()=>{if(previous===undefined)delete process.env.EDICT_HOME;else process.env.EDICT_HOME=previous;fs.rmSync(root,{recursive:true,force:true});});
+  t.after(()=>{if(prior===undefined)delete process.env.EDICT_HOME;else process.env.EDICT_HOME=prior;fs.rmSync(root,{recursive:true,force:true});});
   const project=path.join(root,'project');fs.mkdirSync(project);
   activate(id,defaults('codex','selected-model'),project);
+  // These legacy scheduling structures are used only to test physical range selection.
   recordDispatch(id,{ok:true,result:{dispatchId:'ctx-review',taskId:'task-review',runId:run}},'menxia',run);
-  const native=path.join(root,'native.json'),log=path.join(root,'calls.jsonl'),fake=path.join(root,'orca.mjs');
-  fs.writeFileSync(native,JSON.stringify([]));
-  fs.writeFileSync(fake,`#!/usr/bin/env node
-import fs from 'node:fs';
-const args=process.argv.slice(2),get=k=>args[args.indexOf(k)+1];
-const log=(data)=>fs.appendFileSync(process.env.LOG,JSON.stringify({...data,time:Date.now()})+'\\n');
-const events=()=>fs.existsSync(process.env.LOG)?fs.readFileSync(process.env.LOG,'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse):[];
-let rows=JSON.parse(fs.readFileSync(process.env.NATIVE,'utf8'));
-if(args[0]==='worktree'){
- log({kind:'worktree',args});console.log(JSON.stringify({ok:true,result:{worktree:{path:get('--worktree').startsWith('path:')?get('--worktree').slice(5):process.cwd()}}}));
-}else if(args[1]==='task-list'){
- log({kind:'list',args});
- if(args.includes('--ready'))rows=rows.filter(row=>(row.status==='ready'||row.status==='pending')&&(row.deps||[]).every(dep=>rows.find(x=>x.id===dep)?.status==='completed'));
- console.log(JSON.stringify({ok:true,result:{tasks:rows,runId:get('--run')}}));
-}else if(args[1]==='task-create'){
- const spec=fs.readFileSync(0,'utf8'),id='task-created-'+rows.length;
- rows.push({id,status:'ready',deps:args.includes('--deps')?JSON.parse(get('--deps')):[]});fs.writeFileSync(process.env.NATIVE,JSON.stringify(rows));
- log({kind:'create',args,spec});console.log(JSON.stringify({ok:true,result:process.env.BAD_TASK_RECEIPT?{taskId:{invalid:true},runId:get('--run')}:{task:{id},runId:get('--run')}}));
-}else if(args[1]==='send'){
- log({kind:'send',args});console.log(JSON.stringify({ok:true,result:process.env.SEND_RECEIPT?JSON.parse(process.env.SEND_RECEIPT):process.env.BAD_SEND_RECEIPT?{}:process.env.LIVE_SEND?{messageId:'msg-live'}:{delivery:'reopened',dispatchId:'ctx-followup',taskId:'task-followup',runId:get('--run')}}));
-}else{
- const task=get('--task');log({kind:'start',task,args});
- const started=Date.now();
- const finish=()=>{
-  if(events().filter(x=>x.kind==='start').length<Number(process.env.EXPECTED||1)&&Date.now()-started<1200){setTimeout(finish,10);return;}
-  setTimeout(()=>{log({kind:'end',task});const fail=task===process.env.FAIL_TASK;console.log(JSON.stringify({ok:!fail,result:{dispatchId:'ctx-'+task,taskId:task,runId:get('--run'),failedStage:fail?'agent_readiness':null}}));process.exitCode=fail?1:0;},50);
- };finish();
-}
-`);
-  fs.chmodSync(fake,0o755);
-  const env={ORCA_CLI_COMMAND:fake,NATIVE:native,LOG:log};
-  function cli(args,extra={},input) { return spawnSync(process.execPath,[path.join(ROOT,'bin/edict.mjs'),...args,'--session',id],{cwd:project,encoding:'utf8',input,env:{...process.env,...env,...extra}}); }
   function plan(tasks) {
-    for(const item of tasks) recordTask(id,{ok:true,result:{taskId:item.task,runId:run}},item.role,run);
+    for(const item of tasks)recordTask(id,{ok:true,result:{taskId:item.task,runId:run}},item.role,run);
     const value={run,tasks:tasks.map(item=>({scope:item.task,readOnly:true,approval:{dispatchId:'ctx-review',verdict:'approved',scopes:[item.task]},...item}))};
-    const file=path.join(root,'plan.json');fs.writeFileSync(file,JSON.stringify(value));return {value,file};
+    return {value};
   }
-  const calls=()=>fs.existsSync(log)?fs.readFileSync(log,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[];
-  return {root,project,native,log,env,cli,plan,calls};
+  return {root,project,plan};
 }
 
-test('task creation forwards structured dependencies and embeds the role once',t=>{
-  const f=fixture(t);
-  const result=f.cli(['task-create','bingbu','--spec-file','-','--run',run,'--deps','["task-contract"]','--parent','task-parent'],{},'Literal `code` $(text)\nScope');
-  assert.equal(result.status,0,result.stderr);
-  const created=f.calls().find(x=>x.kind==='create');
-  assert.deepEqual(JSON.parse(created.args[created.args.indexOf('--deps')+1]),['task-contract']);
-  assert.equal(created.args[created.args.indexOf('--parent')+1],'task-parent');
-  assert.match(created.spec,/兵部/);assert.ok(created.spec.includes('$(text)'));
-  const task=JSON.parse(result.stdout).result.task.id;
-  assert.equal(readSession(id).tasks.find(x=>x.taskId===task).role,'bingbu');
-  assert.equal(f.cli(['dispatch','bingbu','--task',task,'--run',run]).status,0);
-  assert.equal(f.cli(['dispatch','libu','--task',task,'--run',run]).status,1);
-});
-test('independent same-role tasks launch concurrently and both receipts are saved',t=>{
-  const f=fixture(t),tasks=[{task:'task-a',role:'bingbu'},{task:'task-b',role:'bingbu'}],p=f.plan(tasks);
-  fs.writeFileSync(f.native,JSON.stringify(tasks.map(x=>({id:x.task,status:'ready'}))));
-  const result=f.cli(['dispatch-ready','--plan-file',p.file],{EXPECTED:'2'});
-  assert.equal(result.status,0,result.stderr);
-  const events=f.calls(),starts=events.filter(x=>x.kind==='start'),ends=events.filter(x=>x.kind==='end');
-  assert.equal(starts.length,2);assert.ok(Math.max(...starts.map(x=>x.time))<=Math.min(...ends.map(x=>x.time)));
-  assert.equal(readSession(id).dispatches.filter(x=>x.role==='bingbu').length,2);
-  for(const item of starts) assert.equal(item.args[item.args.indexOf('--model')+1],'selected-model');
-  assert.equal(events.filter(x=>x.kind==='list').length,2);
-});
+function workflowFixture(t) {
+  const f=fixture(t),proof=path.join(f.root,'proof.txt');fs.writeFileSync(proof,'Independent review');
+  let actor={owner:true},counter=0;
+  const runtime={
+    calls:[],rows:[],identity(){return actor;},open(){return run;},
+    start(runId,settings,spec,options,requestId){
+      this.calls.push({kind:'start',runId,settings,spec,options,requestId});
+      const dispatchId='dispatch-'+(++counter),taskId='task-'+counter;
+      this.rows.push({dispatchId,state:'ready'});return {dispatchId,taskId,runId};
+    },
+    workers(){return this.rows;},
+    send(runId,dispatchId,body,requestId){this.calls.push({kind:'send',runId,dispatchId,body,requestId});return this.receipt??{messageId:'message-live'};},
+  };
+  const w=new Workflow(id,runtime);w.open('Test scoped messages');
+  w.launch(run,'menxia','head',undefined,{spec:'Wait for a legitimate review scope'});
+  w.launch(run,'shangshu','head',undefined,{spec:'Wait for an approved implementation scope'});
+  w.add(run,{id:'W-001',title:'Work',requirement:'Write assigned source',reads:['src'],writes:['src'],acceptance:['Check result']});
+  const as=member=>{actor={owner:false,dispatchId:member.dispatchId};};
+  const head=role=>w.launch(run,role,'head',role==='zhongshu'?undefined:'W-001',{spec:'Perform assigned role',generation:1}).member;
+  const zhongshu=head('zhongshu');as(zhongshu);
+  const proposal=w.plan(run,'W-001',{generation:1,description:'Write src/result.txt',writes:['src'],acceptance:['Check result']});
+  const menxia=head('menxia');as(menxia);
+  w.review(run,'W-001',{generation:1,kind:'plan-approval',digest:proposal.digest,verdict:'approved',evidence:[proof]});
+  as(zhongshu);
+  const send=body=>w.message(run,menxia.id,'W-001',body,undefined,1);
+  return {...f,w,runtime,as,zhongshu,menxia,send};
+}
 
-test('unnamed child worktrees are distinct creation requests while duplicate explicit names are refused',t=>{
-  const f=fixture(t),tasks=[{task:'task-a',role:'bingbu',worktree:'new-child',reads:[]},{task:'task-b',role:'bingbu',worktree:'new-child',reads:[]}],p=f.plan(tasks);
-  fs.writeFileSync(f.native,JSON.stringify(tasks.map(x=>({id:x.task,status:'ready'}))));
-  const result=f.cli(['dispatch-ready','--plan-file',p.file,'--dry-run']);
-  assert.equal(result.status,0,result.stderr);
-  const output=JSON.parse(result.stdout);
-  assert.equal(output.launches.length,2);
-  assert.deepEqual(output.held,[]);
-  for(const row of output.launches) {
-    assert.equal(row.args[row.args.indexOf('--worktree')+1],'new-child');
-    assert.equal(row.args.includes('--repo'),false);
-    assert.equal(row.args.includes('--name'),false);
-  }
-  assert.equal(f.calls().filter(x=>x.kind==='start').length,0);
-  const callsBefore=f.calls().length;
-  p.value.tasks.forEach(item=>{item.name='same-child';});
-  fs.writeFileSync(p.file,JSON.stringify(p.value));
-  const duplicate=f.cli(['dispatch-ready','--plan-file',p.file,'--dry-run']);
-  assert.equal(duplicate.status,1);
-  assert.match(duplicate.stderr,/不可重複建立相同名稱/);
-  assert.equal(f.calls().length,callsBefore);
-});
-test('dependencies release one work item without waiting for an unrelated active item',t=>{
-  const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'},{task:'task-b',role:'libu'},{task:'task-c',role:'hubu'}]);
-  fs.writeFileSync(f.native,JSON.stringify([{id:'task-a',status:'completed'},{id:'task-b',status:'pending',deps:['task-a']},{id:'task-c',status:'dispatched'}]));
-  const result=f.cli(['dispatch-ready','--plan-file',p.file]);
-  assert.equal(result.status,0,result.stderr);
-  assert.deepEqual(f.calls().filter(x=>x.kind==='start').map(x=>x.task),['task-b']);
-});
-test('pending dependencies, completed tasks and a full Run never get launched',t=>{
-  const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'},{task:'task-b',role:'libu'}]);
-  fs.writeFileSync(f.native,JSON.stringify([{id:'task-a',status:'dispatched'},{id:'task-b',status:'pending',deps:['task-a']}]));
-  const result=f.cli(['dispatch-ready','--plan-file',p.file,'--concurrency','1']);
-  assert.equal(result.status,0,result.stderr);
-  assert.equal(f.calls().filter(x=>x.kind==='start').length,0);
-  assert.equal(JSON.parse(result.stdout).held.length,2);
-});
-test('unapproved scopes are rejected before any runtime call',t=>{
-  const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'}]);
-  p.value.tasks[0].approval.scopes=['different-unit'];fs.writeFileSync(p.file,JSON.stringify(p.value));
-  assert.equal(f.cli(['dispatch-ready','--plan-file',p.file]).status,1);
-  assert.deepEqual(f.calls(),[]);
-});
 test('read/write overlaps hold conflicting work; separate declared ranges can run together',t=>{
   const f=fixture(t),p=f.plan([
     {task:'task-a',role:'bingbu',readOnly:false,reads:[],writes:['src/frontend']},
@@ -187,51 +116,84 @@ test('directory scopes include linked descendants and hard-linked files',t=>{
   const tasks=validatePlan(p.value,readSession(id)),rows=tasks.map(x=>({id:x.task,status:'ready'}));
   assert.equal(selectReady(tasks,rows,rows,3).selected.length,1);
 });
-test('one failed parallel launch preserves the other receipt and never retries',t=>{
-  const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'},{task:'task-b',role:'libu'}]);
-  fs.writeFileSync(f.native,JSON.stringify([{id:'task-a',status:'ready'},{id:'task-b',status:'ready'}]));
-  const result=f.cli(['dispatch-ready','--plan-file',p.file],{FAIL_TASK:'task-b',EXPECTED:'2'});
-  assert.equal(result.status,1);
-  const output=JSON.parse(result.stdout);
-  assert.equal(output.results.find(x=>x.taskId==='task-a').exitCode,0);
-  assert.ok(fs.existsSync(output.results.find(x=>x.taskId==='task-b').receiptBackup));
-  assert.equal(f.calls().filter(x=>x.kind==='start').length,2);
-  assert.ok(readSession(id).dispatches.some(x=>x.taskId==='task-a'));
+test('ready selection retains independent parallel work and true dependency boundaries',t=>{
+  const f=fixture(t),p=f.plan([{task:'a',role:'bingbu'},{task:'b',role:'bingbu'},{task:'c',role:'libu'}]);
+  const tasks=validatePlan(p.value,readSession(id));
+  const all=[{id:'a',status:'completed'},{id:'b',status:'ready',deps:['a']},{id:'c',status:'dispatched'}];
+  assert.deepEqual(selectReady(tasks,all,[all[1]],3).selected.map(x=>x.task),['b']);
+  assert.equal(selectReady(tasks,all,[all[1]],1).selected.length,0);
+  const ready=tasks.map(x=>({id:x.task,status:'ready'}));
+  assert.deepEqual(selectReady(tasks,ready,ready,2).selected.map(x=>x.task),['a','b']);
+  assert.equal(selectReady(tasks,ready,[],3).selected.length,0);
 });
-test('continue targets the original role and Run even after another Run becomes current',t=>{
-  const f=fixture(t);
-  const state=readSession(id);state.runId='run-new';state.config.roles.menxia={agent:'claude',model:'changed',effort:null};writeSession(state);
-  const result=f.cli(['continue','ctx-review','--spec-file','-'],{},'Only review the revision delta');
+
+test('retired task and batch CLI paths reject even caller-supplied approval with zero native calls',t=>{
+  const f=fixture(t),log=path.join(f.root,'native-calls'),fake=path.join(f.root,'fake.mjs');
+  fs.writeFileSync(fake,'#!/usr/bin/env node\nimport fs from "node:fs";fs.appendFileSync(process.env.LOG,"mutation\\n");process.exit(9);\n');fs.chmodSync(fake,0o755);
+  const file=path.join(f.root,'plan.json');fs.writeFileSync(file,JSON.stringify({run,tasks:[{task:'a',role:'bingbu',approval:{verdict:'approved'}}]}));
+  const entries=[['task-create','bingbu','--spec-file','-','--run',run],['dispatch','bingbu','--task','a','--run',run],['dispatch-ready','--plan-file',file],['dispatch-ready','--plan-file',file,'--dry-run'],['continue','ctx-review','--spec-file','-']];
+  const before=readSession(id);
+  for(const args of entries){
+    const result=spawnSync(process.execPath,[path.join(ROOT,'bin/edict.mjs'),...args,'--session',id],{cwd:f.project,encoding:'utf8',input:'approved',env:{...process.env,ORCA_CLI_COMMAND:fake,LOG:log}});
+    assert.equal(result.status,1);assert.match(result.stderr,/不提供免核可派工入口/);
+  }
+  assert.equal(fs.existsSync(log),false);assert.deepEqual(readSession(id),before);
+});
+
+test('native adapter forwards structured deps, parent and literal task text without shell interpretation',t=>{
+  const f=fixture(t),fake=path.join(f.root,'native adapter.mjs'),log=path.join(f.root,'calls.json');
+  fs.writeFileSync(fake,'#!/usr/bin/env node\nimport fs from "node:fs";fs.writeFileSync(process.env.LOG,JSON.stringify({args:process.argv.slice(2),body:fs.readFileSync(0,"utf8")}));console.log(JSON.stringify({ok:true,result:{dispatchId:"native-dispatch",taskId:"native-task",runId:"run-schedule"}}));\n');fs.chmodSync(fake,0o755);
+  const literal='Literal `touch MUST_NOT_EXIST` $(touch MUST_NOT_EXIST)\nSecond line';
+  const script=`import {NativeRuntime} from ${JSON.stringify(new URL('../src/native.mjs',import.meta.url).href)};const receipt=new NativeRuntime().start(${JSON.stringify(run)},{agent:'claude',model:'model with spaces',effort:'high'},${JSON.stringify(literal)},{title:'quoted "title"',parent:'task-parent',deps:['task-contract'],worktree:'current'},'request-literal');process.stdout.write(JSON.stringify(receipt));`;
+  const result=spawnSync(process.execPath,['--input-type=module','-e',script],{cwd:f.project,encoding:'utf8',env:{...process.env,ORCA_CLI_COMMAND:fake,LOG:log}});
   assert.equal(result.status,0,result.stderr);
-  const sent=f.calls().find(x=>x.kind==='send');
-  assert.equal(sent.args[sent.args.indexOf('--to')+1],'dispatch:ctx-review');
-  assert.equal(sent.args[sent.args.indexOf('--run')+1],run);
-  assert.equal(sent.args.includes('--model'),false);
-  assert.match(sent.args[sent.args.indexOf('--body')+1],/門下省/);
-  const after=readSession(id);
-  assert.equal(after.runId,'run-new');
-  assert.ok(after.dispatches.some(x=>x.dispatchId==='ctx-followup'&&x.resumedFrom==='ctx-review'));
-  assert.equal(after.continuations.length,1);
+  const call=JSON.parse(fs.readFileSync(log,'utf8')),get=key=>call.args[call.args.indexOf(key)+1];
+  assert.deepEqual(JSON.parse(get('--deps')),['task-contract']);assert.equal(get('--parent'),'task-parent');
+  assert.equal(get('--model'),'model with spaces');assert.equal(get('--task-title'),'quoted "title"');assert.equal(get('--retry-request'),'request-literal');
+  assert.equal(call.body,literal);assert.equal(fs.existsSync(path.join(f.project,'MUST_NOT_EXIST')),false);
+  assert.deepEqual(JSON.parse(result.stdout),{dispatchId:'native-dispatch',taskId:'native-task',runId:run});
 });
-test('a live continuation records its message without inventing a new Dispatch',t=>{
-  const f=fixture(t);
-  const before=readSession(id).dispatches.length;
-  assert.equal(f.cli(['continue','ctx-review','--spec-file','-'],{LIVE_SEND:'1'},'More evidence').status,0);
-  assert.equal(readSession(id).dispatches.length,before);
-  assert.equal(readSession(id).continuations[0].messageId,'msg-live');
-  assert.equal(f.cli(['continue','ctx-other-session','--spec-file','-'],{},'No access').status,1);
+
+test('scoped message retains original Run, member, model snapshot and literal body',t=>{
+  const f=workflowFixture(t),state=readSession(id);state.runId='run-new';state.config.roles.menxia={agent:'claude',model:'changed',effort:null};writeSession(state);
+  const before=f.w.run(run),operation=Object.values(before.operations).find(x=>x.memberId===f.menxia.id);
+  f.runtime.receipt={messageId:'msg-reopened',dispatchId:'dispatch-new',taskId:'task-new',runId:run};
+  const body='Only review "delta" `literal` $(literal)\nSecond line';
+  const record=f.send(body),call=f.runtime.calls.findLast(x=>x.kind==='send');
+  assert.equal(call.runId,run);assert.equal(call.dispatchId,f.menxia.dispatchId);assert.equal(call.body,body);assert.ok(call.requestId);
+  assert.equal(record.state,'delivered');assert.deepEqual(record.receipt,f.runtime.receipt);
+  const after=f.w.run(run),continued=after.operations[record.id];
+  assert.equal(after.members[f.menxia.id].dispatchId,'dispatch-new');assert.ok(after.members[f.menxia.id].dispatches.includes(f.menxia.dispatchId));
+  assert.deepEqual(continued.settings,operation.settings);assert.equal(continued.runId,run);assert.equal(readSession(id).runId,'run-new');
 });
-test('an unidentifiable continuation is backed up without recording or resending',t=>{
-  const f=fixture(t),before=readSession(id);
-  const result=f.cli(['continue','ctx-review','--spec-file','-'],{BAD_SEND_RECEIPT:'1'},'Revision');
-  assert.equal(result.status,1);
-  assert.deepEqual(readSession(id),before);
-  assert.equal(f.calls().filter(x=>x.kind==='send').length,1);
-  assert.equal(fs.readdirSync(path.join(process.env.EDICT_HOME,'receipts')).length,1);
+
+test('native message adapter keeps target, Run and literal body without replacement model arguments',t=>{
+  const f=fixture(t),fake=path.join(f.root,'message adapter.mjs'),log=path.join(f.root,'send.json');
+  fs.writeFileSync(fake,'#!/usr/bin/env node\nimport fs from "node:fs";fs.writeFileSync(process.env.LOG,JSON.stringify(process.argv.slice(2)));console.log(JSON.stringify({ok:true,result:{messageId:"native-message"}}));\n');fs.chmodSync(fake,0o755);
+  const body='Quote " and \' `touch MUST_NOT_EXIST` $(touch MUST_NOT_EXIST)\nReview the original Run';
+  const script=`import {NativeRuntime} from ${JSON.stringify(new URL('../src/native.mjs',import.meta.url).href)};process.stdout.write(JSON.stringify(new NativeRuntime().send(${JSON.stringify(run)},'original-dispatch',${JSON.stringify(body)},'request-send')));`;
+  const result=spawnSync(process.execPath,['--input-type=module','-e',script],{cwd:f.project,encoding:'utf8',env:{...process.env,ORCA_CLI_COMMAND:fake,LOG:log}});
+  assert.equal(result.status,0,result.stderr);
+  const args=JSON.parse(fs.readFileSync(log,'utf8')),get=key=>args[args.indexOf(key)+1];
+  assert.equal(get('--to'),'dispatch:original-dispatch');assert.equal(get('--run'),run);
+  assert.equal(get('--body'),body);assert.equal(get('--retry-request'),'request-send');
+  assert.equal(args.includes('--model'),false);assert.equal(args.includes('--agent'),false);
+  assert.deepEqual(JSON.parse(result.stdout),{messageId:'native-message'});
+  assert.equal(fs.existsSync(path.join(f.project,'MUST_NOT_EXIST')),false);
 });
-test('valid message IDs never conceal invalid or partial additional receipt IDs',t=>{
-  const f=fixture(t),before=readSession(id);
-  const invalid=[
+
+test('a live scoped message saves its receipt without inventing a new Dispatch',t=>{
+  const f=workflowFixture(t),before=f.w.run(run);const record=f.send('Additional review evidence');
+  const after=f.w.run(run);
+  assert.equal(record.state,'delivered');assert.equal(record.receipt.messageId,'message-live');
+  assert.equal(Object.keys(after.operations).length,Object.keys(before.operations).length+1);
+  const originalDispatches=new Set(Object.values(before.operations).map(x=>x.dispatchId).filter(Boolean));
+  for(const op of Object.values(after.operations))if(op.dispatchId)assert.ok(originalDispatches.has(op.dispatchId));
+  assert.deepEqual(after.members[f.menxia.id],before.members[f.menxia.id]);
+  assert.throws(()=>f.w.message(run,'other-session-member','W-001','No access',undefined,1),/目標成員/);
+});
+
+const invalidMessageReceipts=[{},
     {messageId:'msg-valid',dispatchId:123,taskId:456},
     {messageId:'msg-valid',dispatchId:'ctx-new',taskId:456},
     {messageId:'msg-valid',dispatchId:123,taskId:'task-new'},
@@ -243,37 +205,51 @@ test('valid message IDs never conceal invalid or partial additional receipt IDs'
     {messageId:123,dispatchId:'ctx-new',taskId:'task-new'},
     {messageId:'msg-valid',runId:0},
     {messageId:'msg-valid',runId:' '},
-  ];
-  for(const payload of invalid) {
-    const result=f.cli(['continue','ctx-review','--spec-file','-'],{SEND_RECEIPT:JSON.stringify(payload)},'Only the revision');
-    assert.equal(result.status,1,JSON.stringify(payload));
-    assert.deepEqual(JSON.parse(result.stdout),{ok:true,result:payload});
-    assert.deepEqual(readSession(id),before);
+    {messageId:'msg-valid',runId:'other-run'},
+];
+for(const payload of invalidMessageReceipts) {
+ test(`invalid scoped message receipt stays durable unknown without rebinding: ${JSON.stringify(payload)}`,t=>{
+  const f=workflowFixture(t);
+    const before=f.w.run(run),calls=f.runtime.calls.filter(x=>x.kind==='send').length;
+    f.runtime.receipt=payload;
+    const record=f.send('Review this revision');
+    assert.equal(record.state,'unknown',JSON.stringify(payload));assert.deepEqual(record.receipt,payload);
+    const after=f.w.run(run);
+    assert.deepEqual(after.members[f.menxia.id],before.members[f.menxia.id]);
+    assert.equal(Object.keys(after.operations).length,Object.keys(before.operations).length+1);
+    assert.equal(after.operations[record.id].state,'unknown');
+    const originalDispatches=new Set(Object.values(before.operations).map(x=>x.dispatchId).filter(Boolean));
+    for(const op of Object.values(after.operations))if(op.dispatchId)assert.ok(originalDispatches.has(op.dispatchId));
+    assert.equal(f.runtime.calls.filter(x=>x.kind==='send').length,calls+1);
+    assert.equal(after.messages.at(-1).state,'unknown');assert.deepEqual(after.messages.at(-1).receipt,payload);
+ });
+}
+
+test('failure of a later independent start preserves accepted and unknown operation receipts',t=>{
+  const f=workflowFixture(t);
+  f.as(f.menxia);
+  const accepted=f.w.launch(run,'menxia','executor','W-001',{spec:'First independent review',generation:1});
+  const start=f.runtime.start;
+  f.runtime.start=function(...args){this.calls.push({kind:'start',requestId:args.at(-1)});const error=new Error('native readiness failed');error.receipt={ok:false,result:{failedStage:'agent_readiness'}};throw error;};
+  assert.throws(()=>f.w.launch(run,'menxia','executor','W-001',{spec:'Second independent review',generation:1}),/readiness failed/);
+  const after=f.w.run(run),unknown=Object.values(after.operations).findLast(x=>x.state==='unknown');
+  assert.equal(after.operations[accepted.operation.id].receipt.dispatchId,accepted.member.dispatchId);
+  assert.equal(unknown.rawReceipt.result.failedStage,'agent_readiness');assert.ok(unknown.requestId);
+  assert.equal(f.runtime.calls.filter(x=>x.kind==='start').length,5);
+  f.runtime.start=start;
+});
+
+test('independent same-role delegates can both remain in flight without waiting for the first result',t=>{
+  const f=workflowFixture(t);f.as(f.menxia);
+  const first=f.w.launch(run,'menxia','executor','W-001',{spec:'Review requirement coverage',generation:1});
+  const second=f.w.launch(run,'menxia','executor','W-001',{spec:'Review acceptance requirements',generation:1});
+  assert.notEqual(first.member.dispatchId,second.member.dispatchId);
+  const operations=f.w.run(run).operations;
+  for(const launch of [first,second]){
+    assert.equal(operations[launch.operation.id].state,'accepted');
+    assert.equal(f.runtime.rows.find(x=>x.dispatchId===launch.member.dispatchId).state,'ready');
+    assert.equal(operations[launch.operation.id].settings.model,'selected-model');
+    assert.equal(operations[launch.operation.id].result,undefined);
   }
-  assert.equal(f.calls().filter(x=>x.kind==='send').length,invalid.length);
-  assert.equal(fs.readdirSync(path.join(process.env.EDICT_HOME,'receipts')).length,invalid.length);
-});
-test('a valid mixed receipt records both message and complete Dispatch pair',t=>{
-  const f=fixture(t),payload={messageId:'msg-valid',dispatchId:'ctx-new',taskId:'task-new',runId:run};
-  assert.equal(f.cli(['continue','ctx-review','--spec-file','-'],{SEND_RECEIPT:JSON.stringify(payload)},'Revision').status,0);
-  const after=readSession(id);
-  assert.equal(after.continuations[0].messageId,'msg-valid');
-  assert.ok(after.dispatches.some(x=>x.dispatchId==='ctx-new'&&x.taskId==='task-new'));
-  assert.ok(after.tasks.some(x=>x.taskId==='task-new'));
-});
-test('a malformed Task receipt is backed up without indexing or recreating',t=>{
-  const f=fixture(t),before=readSession(id);
-  const result=f.cli(['task-create','bingbu','--spec-file','-','--run',run],{BAD_TASK_RECEIPT:'1'},'Task');
-  assert.equal(result.status,1);
-  assert.deepEqual(readSession(id),before);
-  assert.equal(f.calls().filter(x=>x.kind==='create').length,1);
-  assert.equal(fs.readdirSync(path.join(process.env.EDICT_HOME,'receipts')).length,1);
-});
-test('dry-run queries readiness once without launching or recording work',t=>{
-  const f=fixture(t),p=f.plan([{task:'task-a',role:'bingbu'}]);
-  fs.writeFileSync(f.native,JSON.stringify([{id:'task-a',status:'ready'}]));
-  const before=readSession(id);
-  assert.equal(f.cli(['dispatch-ready','--plan-file',p.file,'--dry-run']).status,0);
-  assert.deepEqual(readSession(id),before);
-  assert.equal(f.calls().filter(x=>x.kind==='start').length,0);
+  assert.equal(f.runtime.calls.filter(x=>x.kind==='start').length,5);
 });

@@ -1,10 +1,14 @@
 import { createInterface } from 'node:readline/promises';
 import { ROLES } from './roles.mjs';
 import { defaults, validateConfig } from './config.mjs';
-export async function configure(previous, options) {
+export async function configure(previous, options = {}) {
+  if (previous !== undefined && previous !== null) {
+    validateConfig(previous);
+    previous = structuredClone(previous);
+  }
   if (options.yes) {
     if (previous && (options.agent || options.model || options.effort)) throw new Error('已有設定；請用 edict config set 調整角色，避免覆寫全部角色');
-    return previous ?? defaults(options.agent, options.model ?? null, options.effort ?? null);
+    return validateConfig(previous ?? defaults(options.agent, options.model ?? null, options.effort ?? null));
   }
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('互動初始化需要終端機；自動化請用 edict init --yes');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -32,6 +36,6 @@ export async function configure(previous, options) {
         validateConfig(config);
       }
     }
-    return config;
+    return validateConfig(config);
   } finally { rl.close(); }
 }

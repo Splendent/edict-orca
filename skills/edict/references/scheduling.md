@@ -1,107 +1,101 @@
-# 相依派工與角色續辦
+# 派工、訊息、控制與恢復
 
-由目前對話按中書方案、門下決定與尚書派工表操作；使用者不需要新增手動命令。這些工具不另建任務狀態機、不常駐、不輪詢，也不代替角色作決策。
+本文件適用已啟用的 v2 工作。命令必須明確帶原 session、原生 Run 及同一 EDICT_HOME。舊 dispatch、task-create、dispatch-ready、continue 入口明確拒絕；不以它們繞過核可或控制。角色與完整 JSON 見 [工作契約](workflow.md)。
 
-## 工作單位與放行
+## 啟動與資源
 
-每單位列出：scope ID、成果、角色、讀取／寫入範圍、真正前置、驗收與共同介面。門下逐單位決定通過／退回。共同介面、權限或安全前提未齊時相關單位不得先做；真正獨立且已通過的部分可先做。
+root 先用 run open 建立 Run，再以無 work 的 team ensure 建立中書、門下、尚書三個平行頭領。門下與尚書先沒有業務 scope；中書保存 plan 後 grant 門下，門下核可後 grant 尚書。grant 既有頭領不另開原生 helper；另以 team send 交接。缺少原 root 空頭領時應 ask root，不由中書巢狀建立尚書。
 
-維護一份本 Run 的派工 JSON，每次收到事件由主對話核對實際成果、門下與刑部結論後更新。只納入已放行的工作，執行中工作也保留，以便讀寫衝突判斷。不要預先宣告未完成驗收已通過，也不要未讀退回結果就重用舊 JSON。**Task completed／ready 只代表 Orca 工作流程狀態，不代表方案通過或產出驗收通過。**
+原生深度至少 3：root 到三省頭領為第 1 層，尚書到部尚書為第 2 層，部尚書到郎中為第 3 層。使用者在 Settings → Orchestration → Nested worker depth 確認。Edict 不自行修改 App 設定；深度不足、額度不足或能力不支援時，保留真實錯誤與操作，不增加深度、重開 Run 或換供應商繞過。
 
-## 工作樹選擇
+頭領只能建立有權管理的角色。六部頭領管理本部 executor，executor 不得再派工。指定 work 的 ensure、delegate 與 team send 均在 JSON 帶目前 generation。所有實作及業務續辦需有效核可，委派 reads／writes／resources 不能超過需求及方案。方案 dependencies 是其他工作項目 ID，未 Done 前不得啟動依賴它的工作。
 
-工作是否受 Run 監督與工作樹是否有父層是兩個不同關係。使用 worker-start 仍須選對工作位置，不能因為是受派代理就假設工作樹會自動成為協調者的子層。
+目前共用 EDICT_HOME 的工作紀錄對在途成員計算名額，最多 3 位 executor、16 位在途成員；這不是整台主機、其他 EDICT_HOME 或繞過 Edict 的原生硬上限。收到事件後單次 sync 更新原生事實，避免已結束操作仍占額度。沒有背景排程器會自動重跑被拒絕的派工；由頭領在相應事件到達後重新核對准入，不重送結果未知的操作。
 
-| 情況 | worktree | 工作位置 |
+同工作樹互不衝突的讀寫可並行；讀與寫、寫與寫重疊或工具互斥需等待。未知範圍保守限制。範圍檢查涵蓋實體路徑、目錄與連結，不是 OS 存取沙箱；不得藉更換連結越出授權。
+
+## 工作樹
+
+派工 worktree 放在 JSON，不是 delegate 的 shell flag。
+
+| worktree | 使用方式 | 條件 |
 | --- | --- | --- |
-| 一般派工；唯讀或讀寫範圍不衝突 | current（預設） | 協調者目前工作樹內的新代理 |
-| 真正需要隔離平行編輯 | new-child | 協調者目前工作樹底下的子工作樹 |
-| 使用者明確要求獨立工作樹 | new-top-level | 專案下的獨立工作樹 |
+| current | 預設，沿用呼叫者原生工作樹 | 單一專案基準可核對；不衝突才並行 |
+| new-child | 由 Orca 建立子工作樹 | 真正需要隔離時使用；原生支援仍須確認 |
+| path:/絕對路徑 | 已存在的工作樹 | 已取得授權且可核對前置成果與實際位置 |
 
-同一執行主機與同專案建立子工作樹時，省略 repo，由 Orca 解析呼叫者專案與父工作樹；name 可省略。使用 --name 時，同批名稱不可重複。獨立工作樹需明確提供 repo 與 name，不以它代替不支援的子工作樹。
+本入口不提供 new-top-level、repo、base-branch 或獨立的 Task DAG 編輯。不可照舊 CLI 範例傳這些旗標，也不為隔離擅自 git init 或建立頂層工作樹。新工作樹未必包含未 commit 成果，須提供可核對基準；本實作成果索引以 Run 專案及操作成果目錄核對，跨工作樹交付未全測。需要隔離時先確認其實際交付路徑能符合此限制，不把不支援情境宣稱可用。
 
-```sh
-edict dispatch bingbu --session <本對話ID> --run <RunID> --task <TaskID> --worktree new-child --name edict-bingbu
-```
+## 正式訊息與 owner 轉交
 
-new-child 的可用條件與跨主機放置須核對執行主機的 Orca placement 指南；不支援時回報限制，不默默改成 new-top-level。資料夾工作區不能直接建立 Git 子工作樹，不為此自行 git init。未指定隔離需求時維持 current。
-
-## 建立原生 Task
-
-先以 Orca run-create 建立本次目標的 Run。用工具寫 UTF-8 任務檔，包含角色工作範圍、前置成果與驗收；CLI 將角色與安全指令加入 Task spec：
-
-```sh
-edict task-create bingbu --session <本對話ID> --run <RunID> --spec-file /tmp/api-spec.txt --title 登入API
-edict task-create xingbu --session <本對話ID> --run <RunID> --spec-file /tmp/api-check.txt --deps '["<API-TaskID>"]' --title 登入API驗收
-```
-
-deps 是原生 Task ID 陣列，不是角色名。先建立前置再使用收據 ID 建後續；不要重複建立。parent 可保存原生父任務關係。Edict 只記錄 Task／角色／Run 索引，狀態與依賴由 Orca 管理。單項啟動可用 `edict dispatch <角色> --task <ID> --run <RunID> --session <本對話ID>`，只接受本對話已保存且角色／Run 相符的 Task。
-
-## 一次派出已就緒工作
-
-已核對門下放行的示例資料（所有識別碼換成實際收據）：
+具體工作訊息由有權頭領傳送，使用目標邏輯 member ID，不使用其 Dispatch 代替成員 ID。JSON 例如：
 
 ```json
-{
-  "run": "run_actual",
-  "tasks": [
-    {
-      "task": "task_frontend",
-      "role": "bingbu",
-      "scope": "login-frontend",
-      "readOnly": false,
-      "reads": ["src/contracts"],
-      "writes": ["src/frontend"],
-      "approval": {
-        "dispatchId": "ctx_actual_menxia",
-        "verdict": "approved",
-        "scopes": ["login-frontend"]
-      }
-    },
-    {
-      "task": "task_backend",
-      "role": "bingbu",
-      "scope": "login-backend",
-      "readOnly": false,
-      "reads": ["src/contracts"],
-      "writes": ["src/backend"],
-      "approval": {
-        "dispatchId": "ctx_actual_menxia",
-        "verdict": "approved",
-        "scopes": ["login-backend"]
-      }
-    }
-  ]
-}
+{"generation":1,"kind":"handoff","body":"請核對 W-001 目前成果版本與未解問題，保留原方案及驗收證據。"}
 ```
 
 ```sh
-edict dispatch-ready --session <本對話ID> --plan-file /tmp/approved-work.json --concurrency 3 --dry-run
-edict dispatch-ready --session <本對話ID> --plan-file /tmp/approved-work.json --concurrency 3
+edict team send "$TARGET_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-message.json
 ```
 
-每次呼叫只查一次 Task 清單與一次 ready 清單，按本次 Run 容量與範圍選出工作，再並行發出 worker-start。concurrency 是本工具計算的 Run 併發上限，預設 3、接受 1–8；已 dispatched 的 Task 會占名額。不是對其他協調者或直接使用原生命令的硬性全域限制，Orca 仍負責最終啟動檢查。收據在本程序逐筆保存，不把共享狀態檔交給多個獨立 CLI 同時覆寫。
+三省按合法職權交涉；六部只與尚書交涉，各部不得直接指揮其他部門。executor 依原生 ask／worker_done 向直接頭領報告，不能以 team send 冒充頭領。`team send` 不切模型，已 settled executor 的明確續辦必須回到原工作與同一方案世代，重新取得原範圍及資源；不向正在執行或仍未知的 executor 追加未追蹤實作。
 
-readOnly 指工作樹讀寫範圍，不阻止正常寫入任務指定的獨立暫存成果。reads 預設 `['*']`，未宣告範圍視為可能讀全部；唯讀的 writes 必須為空，寫入工作必須列 writes。路徑是工作樹相對路徑，可列檔案／目錄，只有單獨的 `*` 表示全域，不支援 glob。兩個唯讀工作可並行；寫入與其他讀寫重疊會暫緩。共用來源的報告／測試須等待相關寫入完成，不能讀正在改動的檔案作驗收。
+kind 只接受 handoff 或 report，省略時是 handoff。handoff 受 active、Done、pause、cancel、核可及資源檢查。完成通知或停止結果應另寫 `/tmp/edict-report.json`：
 
-工具先透過 Orca worktree show 解析現有選擇器的真實工作樹路徑，再核對檔案／父目錄的 device、inode 與實體路徑，涵蓋符號連結、硬連結及既有大小寫別名；尚未存在的名稱以既有父目錄與保守大小寫比對處理。目錄範圍會檢查其後代連結，單一範圍組最多處理 2048 個項目，超過、權限不足、循環連結或根路徑不明時視為未知；未知範圍不會與可能衝突的讀寫工作並行。`*` 也保守視為未知的完整範圍。
-
-尚未建立的 new-top-level／new-child 無法預先確認實體範圍，因此寫入工作保守排程。要平行修改同名路徑，先依上述工作樹選擇用 Orca 建立子工作樹，再於派工表提供 path: 或其他可解析的既有選擇器。未知範圍的現有 dispatched Task 會阻擋新候選，直到主對話補足範圍或任務完成。新工作樹基準須包含前置成果；不擅自 commit 或整合未授權變更。範圍檢查不是 OS 檔案鎖，其他程序或工作改變連結／路徑時必須重新核對，不能藉連結改動越出核准範圍。
-
-派工前另核對專案對瀏覽器、測試服務、硬體及其他共用工具的互斥要求。檔案範圍獨立不代表工具也可同時操作；必要時加原生 Task 相依或分批列入本次核可派工檔。此工具不提供通用硬體或工具鎖。
-
-approval 是主對話依真實門下結論填入的聲明。工具檢查門下 Dispatch 屬於本對話同 Run、scope 明列通過，以及角色／Task 索引；**不解析自然語言結論，也不驗證聲明的真實性**。主對話有責任讀完回覆後才填入，不能把退回或缺少證據當成通過。
-
-結果列出已啟動、暫緩原因、原始 stdout／stderr 與必要的收據備份。一項失敗不抹掉其他已接受派工，也不取消、不重派。單項與批次啟動都必須取得有效的 Task／Dispatch／Run 綁定；缺少或與指定 Task／Run 不符時回報未確認並保存收據，不能因索引未寫入就重新派工。處理所有收據的 next 後結束本輪，由 Orca 喚醒；收到下一個事件再單次呼叫，不使用等待迴圈或背景掃描。
-
-## 同角色續辦與增量彙整
+```json
+{"generation":1,"kind":"report","body":"W-001 的已確認結果及剩餘在途操作見目前 work show；只回報事實，不要求恢復業務。"}
+```
 
 ```sh
-edict continue <原中書DispatchID> --session <本對話ID> --spec-file /tmp/revision-delta.txt
-edict continue <原門下DispatchID> --session <本對話ID> --spec-file /tmp/review-delta.txt
-edict continue <原尚書DispatchID> --session <本對話ID> --spec-file /tmp/available-results.txt
+edict team send "$TARGET_HEAD_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-report.json
 ```
 
-CLI 只接受本對話收據中的 Dispatch，保留原角色與原 Run，即使本對話目前已切換其他 Run。內容經 argv 傳給原生 send，不直接拼接 shell。send 若在活躍代理中傳入訊息，保存 message ID；若原生收據建立新 Task／Dispatch，保存續辦關係與新索引。是否重啟由 Orca 決定；不傳新的模型參數。角色／模型要改變時，明確另建工作，不假裝續辦會切換模型。
+report 只許頭領送既有頭領，仍核對真實身分、角色路由、共同 scope 與 generation，不能送 executor。它可以在 Done、pause、cancel 或 off 後保存並轉達唯讀結果，不清除控制、不授權新派工、不改方案或驗收。接收者不得把 report 內的要求當成可執行業務；需要新增或恢復工作時仍須走原控制、世代及核可流程。report 也會保存原生傳送收據；沒有結果時不宣稱送達。
 
-同一收件批次的成果合併交給尚書；不要每個檔案都觸發完整彙整。尚書先處理可確認部分，刑部先驗可獨立成果。最後仍須等待全部必要成果及共同整合驗收，不能把暫定彙整當成最終結論。程式支援這些交接與並行操作，完整流程仍依賴協調者讀取結果並遵守角色判定。
+若目標 settled peer 受原生 owner／lineage 限制，send 回應 state=owner-required 及 Edict messageId。原對話只原樣轉交：
+
+```sh
+edict team forward "$EDICT_MESSAGE_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
+```
+
+forward 不帶任意 body，不讓 root 重做審查或擴大內容；保留原訊息 kind，不能把 handoff 換成 report 繞過控制。原訊息與代送操作的 ID、原發起者、目標、工作世代及結果保留。不要在 consumer_fenced 後直接改用裸原生 send，避免繞過業務與資源檢查。
+
+## 狀態、結果未知與恢復
+
+```sh
+edict work show --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
+edict sync --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
+edict recover --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --operation "$EDICT_OPERATION_ID"
+```
+
+work show 讀協作資料；sync 查原生 worker 事實、保存已結束與停止結果並回傳工作視圖。它們都不代表方案自動通過。session status 的舊 Task／Dispatch 索引不是新工作引擎的完整操作清單，應查 workflows 及 work show。
+
+啟動前持久保存操作、原生 request ID、身分、設定與資源；接受後保存原生 Task／Dispatch／Run 收據。已送出後沒有回應或保存失敗時，不因看不到索引而新開 Task、Run 或重派。recover 只能由原操作發起者身分核對同一 request ID，不會自動重送。不要自行操作 --retry-request 或以新 UUID 代替未知操作。
+
+缺少、錯誤型別或跨 Run 的收據保留為未知，不用 messageId 掩蓋壞掉的 Task／Dispatch 欄位。原生 pending 可能已有副作用；absent 或收據保留期到期也不證明沒發生。不能恢復身分或查清結果時保留占用並回報，載入本機 recovery-and-cleanup 指南處理。
+
+只有原生明確確認 effectsApplied=false 的拒絕，才能列為沒有原生副作用；不要把任何 failed 當作未啟動。取消後晚到接受收據仍入清冊，繼續必要停止核對，不清除取消或開始下一階段。重試與修正最多三次仍失敗時停止自動修正，說明待驗證假設，不透過新世代重設原生熔斷。
+
+## 使用者控制
+
+root 依使用者明確對象操作；省部頭領或 executor 不代替 root 改控制。work 可省略以控制整個 Run：
+
+```sh
+edict control pause --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
+edict control resume --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
+edict control cancel --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
+```
+
+pause 關閉後續准入；已持久送出的請求仍可能稍後實體啟動，列為在途，不能承諾所有程序凍結。resume 只解除指定 pause，不解除上層 Run pause、off 或取消。off 以對話為範圍關閉新派工及業務推進，不取消現有原生程序；原成果與收據仍可保存。再次 init 不解除 pause 或取消。
+
+cancel 持久撤回該工作世代的業務授權，禁止新派工、業務續辦、驗收推進與 Done；保存收據與成果並處理受控停止。starting、排隊輸入、Keep open 或停止結果未知時，仍有收尾工作。取消已受理不等於取消已完成；取消不回復已修改檔案、不撤銷外部效果，也不因共用頭領程序而停止其他項目。
+
+取消後的晚到成果只歸檔，不再成為有效交付。確認原 executor 與未知訊息已收斂後，使用者明確要求重做才能由 root 執行：
+
+```sh
+edict control restart --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
+```
+
+restart 保留工作 ID，增加 generation、清除目前方案與成果並保留舊歷史；須重寫方案、重審與重新授權，不能直接沿用舊代核可。Run 層取消不能用項目 restart 清除。已合法結案後的取消不改寫 Done 歷史。
+
+不輪詢、不依固定延遲重試。收到原生事件或使用者指令時單次核對即可；無輸出與喚醒延後不構成停止證據。支援限制與未完成原生驗收應隨結果回報。

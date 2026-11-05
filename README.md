@@ -1,145 +1,105 @@
 # Edict for Orca
 
-將 [cft0808/edict](https://github.com/cft0808/edict) 的角色協作流程改編為既有 Orca 對話可用的命令列與手動技能。沿用目前對話，透過 Orca 派出 Claude Code、Codex 或 Cursor 代理，各角色可分別設定模型。本套件不包含原版網頁看板或 OpenClaw 執行環境；來源版本與改編範圍見 [NOTICE.md](NOTICE.md)。
+將 [cft0808/edict](https://github.com/cft0808/edict) 的三省六部流程改編為目前 Orca 對話可使用的命令列與手動技能。原對話整理需求，中書規劃、門下審查、尚書管理六部，各省部頭領可管理多位執行代理。來源與改編責任見 [NOTICE.md](NOTICE.md)。
 
-目前版本為 **0.3.0-beta.2**，屬預覽版。支援範圍與尚未驗證事項見下表；不宣稱跨所有代理、平台及對話恢復方式都已驗證。
+0.4.0-beta.1 使用 v2 資料。已在 macOS、Orca 1.4.249 與 Codex 驗證三省、部尚書及郎中的完整交接、刑部驗收、門下結案與限定範圍取消；證據見 [原生驗證紀錄](docs/verification/native-2026-11-05.json)。這不代表所有代理、主機、恢復或任意開發任務均已實測。
 
-在目前對話執行一次 `/edict init`，完成角色與模型設定後，正常交代工作。這段對話依 Edict 規劃、獨立審核、派工與驗收；一般問答直接回答。其他對話預設未啟用。套件不安裝 hook、常駐規則或輪詢程序。
+在目前對話手動執行一次 `/edict init`，選擇代理與模型並完成啟用後，正常交代工作；一般問答直接回答。Codex 原生入口是 `$edict init`。其他對話預設停用，不安裝 hook、背景輪詢或常駐模型程序。
 
-Claude Code、Cursor 使用 `/edict init`；Codex 原生技能入口是 `$edict init`。Cursor 的初次設定包含將 Edict 選為此對話的 Custom Mode，見下節。不宣稱能替 Codex CLI 新增任意原生斜線命令。
+## 安裝與環境
 
-## 安裝
-
-需要 Node.js 20 以上、Git、可用的 Orca，以及已登入的 Claude Code、Codex 或 Cursor。下載此公開儲存庫不需要 GitHub 帳號；使用代理仍須有各自的帳號與使用額度。Orca 介面已在 1.4.246 核對，其他版本以 `doctor` 的介面檢查及當地實測為準。
-
-在要保留套件的目錄安裝固定版本，每台電腦一次。以下為 macOS／Linux shell 指令：
+需要 Node.js 20 以上、Git、可用的 Orca，以及使用者已登入的 Claude Code、Codex 或 Cursor。先核對手上的原始碼，再於套件根目錄安裝；以下指令不下載或發布版本：
 
 ```sh
-git clone --branch v0.3.0-beta.2 https://github.com/Splendent/edict-orca.git
-cd edict-orca
 node scripts/install-local.mjs --dry-run
 node scripts/install-local.mjs
 node bin/edict.mjs --version
 ```
 
-安裝器建立使用者層級命令與共用手動技能，連結到各代理技能目錄，不啟用對話，也不修改代理設定、hook 或工作專案。若 ~/.local/bin 不在 PATH，先加入該目錄；也可用 `node <儲存庫路徑>/bin/edict.mjs`。固定 tag 的檢出不跟隨 main，更新時依下節切換版本。套件目錄是連結目標，安裝後須保留。
+安裝器建立命令與手動技能連結，不啟用對話、不修改代理模型或工作專案。`~/.local/bin` 未在 PATH 時，可用 `node /套件絕對路徑/bin/edict.mjs`；技能也附有 `skills/edict/scripts/edict.mjs` 入口。套件是連結目標，安裝後須保留。
 
-既有對話未發現新技能時，可直接請代理讀取安裝位置的 SKILL.md，不必改工作專案。
+階層需要 Orca 的原生深度至少 3，對應「root → 尚書僕射 → 部尚書 → 郎中」。由使用者在 **Settings → Orchestration → Nested worker depth** 確認。Edict 不自行改 App 設定；深度拒絕時保留操作收據並回報，不另開 Run 或改模型繞過限制。
 
-## 支援與驗證範圍
+## 啟用、設定與對話身分
 
-| 對象 | 驗證範圍 | 限制 |
-| --- | --- | --- |
-| macOS、Orca 1.4.246、Codex | 真實 Task 建立、原生相依、單項與平行派工、同角色續辦及收據索引 | 小型統計任務；未涵蓋完整多角色開發流程 |
-| Claude Code、Cursor | 角色設定、模型參數與模擬 Orca 呼叫；手動入口設定 | 不代表兩者的真實多輪與壓縮恢復均已通過；Cursor 另須確認原生模式 |
-| macOS／Ubuntu CI、Node.js 20／24 | 單元測試與語法檢查，狀態及設定使用臨時目錄 | 不啟動真實 Orca、不使用供應商憑證；結果以該版本的 [CI 紀錄](https://github.com/Splendent/edict-orca/actions) 為準 |
-| Windows 更新器 CI、Node.js 24 | 使用本機 Git 與模擬發佈清單驗證更新器 | 不代表 Windows 完整安裝或真實多代理協作已通過 |
-
-`edict --version` 顯示套件版本，不需要啟用對話。`edict doctor --session <本對話ID>` 唯讀檢查 Orca 連線，以及基本派工、Task 相依、批次就緒查詢和續辦所需介面；不建立 Run／Task、不派工、不讀信箱。檢查成功不代表帳號額度、特定模型或完整工作流程已驗證。
-
-## 對話命令
-
-| 命令 | 用途 |
+| 對話命令 | 行為 |
 | --- | --- |
-| `/edict init` | 設定並啟用目前對話，接下來正常交代工作 |
-| `/edict status` | 查看本對話開關、角色模型及 Orca 派工紀錄 |
-| `/edict config` | 調整本對話角色設定，只影響之後啟動的 worker |
-| `/edict off` | 停用本對話，保留紀錄；不取消已派工作 |
-| `/edict update` | 更新這台電腦的套件，並讓目前對話重讀新版指引；保留現有工作 |
-| `/edict help` | 顯示用法，不啟用 |
+| `/edict init` | 問代理／模型、保存設定，啟用目前對話 |
+| `/edict status` | 顯示 active、角色設定與協作工作摘要 |
+| `/edict config` | 修改此對話未來派工的角色或職位設定 |
+| `/edict off` | 關閉新派工與推進，保留資料，不自動取消現有代理 |
+| `/edict update` | 手動更新共用安裝並由本對話重讀指引 |
+| `/edict help` | 顯示說明，不啟用 |
 
-Codex 將 `/edict` 換成 `$edict`。不用每次任務重複命令。引用文件或程式碼中的命令不代表授權啟用。
+Codex 將 `/edict` 換成 `$edict`。安裝、引用範例及一般工作要求均不代表授權 init。`--yes` 只供代理保存使用者已明確選擇的設定，不代表可自選供應商或模型。
+
+CLI 優先沿用代理的原生對話 ID；缺少原生 ID 時，首次 init 回傳 `conversation:UUID`。保留該 ID，後續明確傳 `--session`；不得用專案、終端機或最近一份狀態猜測。壓縮摘要需保留 EDICT_HOME、session、active、模型設定、各 Run 與未完成操作。失去 ID 或上下文時回報，不默默重建。
+
+session、config 與工作資料只接受 v2，不支援 v1 匯入或自動遷移。驗證本實作時使用獨立的新 EDICT_HOME，將同一路徑交給所有下屬；保留原資料及原有工作，不刪除或覆寫它們。既有 v1 對話不能直接套用新版 CLI 繼續工作。
+
+設定完整保留所有角色的 agent／model／effort。`positionOverrides` 可為個別角色的 head 或 executor 保存完整三欄；省略整組就繼承角色設定，null model 明確使用該代理工具預設。不逐欄混用不同供應商設定，不自動降級。
+
+以下變數均須填入本對話的實際值；模型先經使用者指定：
+
+```sh
+edict config --session "$EDICT_SESSION_ID"
+edict config set bingbu --session "$EDICT_SESSION_ID" --position executor --agent "$SELECTED_AGENT" --model "$SELECTED_MODEL"
+edict config set bingbu --session "$EDICT_SESSION_ID" --position executor --inherit
+```
+
+修改設定不更換執行中的代理；續辦沿用原成員設定快照。完整 v2 設定可在首次 init 時用 `--import-config` 匯入，已有設定不得再匯入覆寫。
 
 ## Cursor 持續啟用
 
-Cursor 的一般技能呼叫只附於單則訊息。初次 `/edict init` 保存設定後，代理會請你在 `/` 技能選單為 Edict 選 **Use as Mode**，或使用介面對應的 Option+Enter／Alt+Enter。確認輸入框出現 Edict 模式標記後，代理完成本次 init；之後正常交代工作，不必每次附加技能。
+Cursor 作為目前對話的協調者時，init 帶 `--coordinator cursor`。首次保存為 active=false、pending=cursor-custom-mode；使用者需在原生技能選單選 **Use as Mode**，確認輸入框的模式標記後，代理再以同一 session 執行 `--mode-confirmed`。沒有介面證據或使用者確認時不得宣稱啟用。
 
-CLI 將此過程保存為 active=false、pending=cursor-custom-mode，確認原生模式選定後才改成 active=true；未完成時拒絕派工。off 會停用狀態，並提示退出模式標記。模式未退出前也必須遵守停用狀態，不會自動恢復流程。
+當地介面缺少此模式時保持 pending，明列未支援／未驗證；不要要求每則訊息重新附加技能來冒充持續啟用。off 後退出模式標記，尚未退出也仍須遵守停用狀態；再次 init 須重新確認。Cursor 作為 worker 的模型設定與此事分開。
 
-[Cursor 原生模式文件](https://cursor.com/docs/agent/prompting) 說明 Agents Window 與 CLI 都支援 Custom Mode；當地 Orca 使用的版本與介面仍須實際確認。有版本無法選定模式時，init 保持待完成，不宣稱已達成持續啟用。
+## 代理內部流程
 
-## 狀態與設定
+使用者不必逐次轉交或手動輸入內部命令。代理依 [協調流程](skills/edict/references/active.md)、[角色與資料契約](skills/edict/references/workflow.md)及[派工、訊息與恢復](skills/edict/references/scheduling.md)操作。
 
-首次 init 優先使用代理提供的原生對話ID；沒有時回傳獨立的 conversation:UUID 識別碼。代理將識別碼保留在本對話，後續 CLI 明確沿用，並在壓縮摘要保留開關、識別碼、角色設定及目前 Run。不得以專案或終端機判定對話，也不掃描並猜選最近狀態。識別碼遺失時須回報，不默默重設。
-
-狀態保存於 ~/.config/edict/sessions，以 SHA-256 命名並限制權限；EDICT_HOME 可更換位置。修改 A 對話不改 B。這是供代理依對話指令讀取的資料，沒有背景機制自動注入。技能無法保證所有代理在壓縮後都正確延續指令，必須實測，遺失上下文時明列限制。
-
-各角色可選 Claude、Codex、Cursor 與使用者指定模型；未指定模型沿用工具預設。不自動換供應商或降級。改設定不會更換執行中的 worker 模型。
-
-## Orca 與 CLI
-
-目前對話負責協調，不另開主對話。派工經 Orca worker-start，任務從 stdin 傳入；ask、reply、worker_done、喚醒及復原依執行主機的版本對應指南。派工狀態以 Orca 為準；本套件只保存收據索引。
-
-一般派工使用 current，代理留在目前工作樹；讀寫範圍不衝突時也能在其中平行實作。需要隔離編輯時使用 new-child，在目前工作樹底下建立子工作樹；只有使用者明確要求獨立工作才用 new-top-level。同專案的 new-child 不需指定 repo，名稱可交由 Orca 決定。工作樹父子關係與 Run 監督關係分開，受派代理不會因此自動成為子工作樹。
-
-| 層次 | 責任 |
+| 階段 | 入口與決策者 |
 | --- | --- |
-| 目前對話 | 整理需求、讀取角色結論、轉交成果及回報 |
-| Edict 技能 | 約定中書規劃、門下審查、尚書派工與彙整、部門執行、刑部驗收 |
-| Edict CLI | 讀取角色設定、檢查派工範圍、呼叫 Orca、保存索引與收據 |
-| Orca | 管理原生 Task 相依、Dispatch、代理生命週期與完成通知 |
+| 建立需求與三省 | root `run open`、`work add`，無 work 的 `team ensure` 建立三省平行頭領 |
+| 規劃與送審 | 中書 `work plan`，以 `team ensure menxia --work` 授予既有門下工作範圍，再 `team send` |
+| 放行與實作 | 門下 `review record` 記 plan-approval；中書或門下授予既有尚書工作；尚書建六部頭領，各部 `delegate` |
+| 成果與驗收 | implementation executor `work result`；刑部 artifact-acceptance；原生結束後 `sync` |
+| 結案與控制 | 門下 closure-confirmation 才能 Done；root `control pause/resume/cancel/restart` |
 
-角色限制及核准結論部分依賴代理遵守指令，並非作業系統權限隔離。派工範圍檢查用於避免讀寫衝突，不提供檔案存取沙箱；實際權限仍由各代理與執行環境設定決定。
+門下與尚書的空頭領沒有業務 scope。root 建立它們不等於代替中書送審或門下批准；原生 creator 保持 root，正式業務來源仍是中書／門下。所有指定 work 的方案、授權、委派、審查及訊息均帶目前 generation；成果以 operation 綁定原世代。
 
-工作按可獨立驗收的單位與真正相依拆分；門下可逐項放行，共同介面或安全前提未齊的相關單位仍須等待。同角色可以有多個獨立執行者，同任務修正續辦原角色；尚書收到部分成果就核對與增量彙整，刑部可先驗獨立成果，最後仍需整體整合驗收。
+`team send` 使用成員 ID，`team forward` 使用需 owner 代送的訊息 ID。結果未知用原操作的 `recover` 核對，不另建派工。舊 `dispatch`、`task-create`、`dispatch-ready`、`continue` 入口明確拒絕，不作為免核可替代路徑。
 
-代理內部工具：`task-create` 建立具有原生 deps 的 Task，`dispatch --task` 啟動既有 Task，`dispatch-ready` 在核可派工表中並行啟動已就緒且不衝突的工作，`continue` 交還原 Dispatch 並保存後續收據。操作格式與放行聲明限制見 [相依派工工具](skills/edict/references/scheduling.md)。工具不代替門下判斷、不常駐、不輪詢，也不把結果未知當成可重試。
+## 支援與驗證範圍
 
-使用者通常只需對話命令。以下供代理操作，識別碼與模型需換成實際值：
+| 對象 | 可主張的範圍 | 尚未完成的驗證 |
+| --- | --- | --- |
+| v2 設定與工作政策 | 本機模擬測試涵蓋角色、核可、世代、控制、收據及範圍 | 模擬身分不等於原生身分隔離驗收 |
+| macOS、Orca 1.4.249、Codex | 具原生身分的中書送審、門下核可、尚書→部尚書→郎中、刑部驗收、門下結案與限定範圍取消成功 | 有界報告任務；不涵蓋任意開發任務、所有恢復或取消交錯 |
+| Claude Code、Codex、Cursor | 可明確設定各角色及職位的代理與模型 | 不宣稱各供應商完整多輪、所有模型及壓縮恢復皆成功 |
+| CI | 定義 macOS／Ubuntu Node 20／24 測試與 Windows Node 24 更新器測試 | 以對應提交的實際 CI 結果為準，不推定本工作目錄已在 CI 成功 |
 
-```sh
-edict init --yes --agent codex
-edict status --session conversation:RETURNED_ID
-edict config set menxia --session conversation:RETURNED_ID --agent claude --model MODEL_ID
-edict dispatch zhongshu --session conversation:RETURNED_ID --spec-file /tmp/edict-plan.txt --dry-run
-edict off --session conversation:RETURNED_ID
-```
+`doctor` 只讀取 help 與執行環境狀態，不派工、不消費信箱。它檢查既有基本介面，不認證完整階層流程、請求去重、Nested worker depth、帳號或特定模型。工作狀態以 Orca 為原生來源；Edict 另保存委派、控制、決策、證據及操作意圖。
 
-首次設定由代理透過對話詢問後保存；--yes 不代表代替使用者選擇模型。重複 init 時需沿用已保存的 --session，避免建立另一份狀態。Codex 環境有 CODEX_THREAD_ID 時可自動辨識。
+政策檢查防止正常代理經 Edict 入口越權，不是同一 OS 帳號的安全沙箱。其他程式仍可能直接修改檔案或呼叫工具；既有 sandbox 及專案授權必須持續生效。commit、merge、push、部署及外部傳送不由流程自動授權。
 
-## 更新與舊版
+## 更新與移除
 
-已安裝 0.3.0-beta.2 或更新版本時，在原本對話執行一次：
+更新只在使用者明確要求時執行，`update` 只取得已發布版本。本方案不設計舊版遷移、跨版本續辦或降版；驗證與使用新架構採全新 v2 狀態，既有資料不自動轉換或清除。
 
-```text
-/edict update
-```
+更新器選官方已發布版本，拒絕不符來源、有本機修改、未追蹤檔案或更新鎖的安裝；不用 pull、merge、reset 或自動重試。它仍在共用安裝根目錄切換版本，沒有實作按 Run 保留不可變程式版本的發布機制。後續 CLI 都受影響，其他對話不會自動啟用或重讀。檔案更新完成後，當前代理按 `reload.files` 重讀四份指引及 context，才回報已重讀；不可承諾跨不相容版本的在途相容。
 
-Codex 使用 `$edict update`。代理會更新這台電腦的 Edict，重新讀取指引，沿用本對話的識別碼、開關、模型、Run 與未完成工作。不需重新 init，也不重開或重派代理。已開出的工作樹不移動；新版派工選擇適用於之後的工作。其他對話不會自動啟用或重新載入。
+移除前在原對話 off，確認原生工作結束；只移除已核對指向本套件的連結：
 
-更新只選官方 GitHub Release 已發佈的版本。預覽版可更新到較新的預覽版或正式版，正式版不自動切到預覽版，也不降版；需要 Git 與 GitHub 網路連線，不需 GitHub 登入或 npm 安裝。安裝目錄有本機修改、未追蹤檔案或另一個更新鎖時停止，保留原檔。下載期間出現修改也不覆寫。下載及切換使用 tag，不執行 pull、merge、reset 或自動重試。
+- `~/.local/bin/edict`
+- `~/.agents/skills/edict`
+- `~/.claude/skills/edict`（自訂 CLAUDE_CONFIG_DIR／ORCA_CLAUDE_CONFIG_DIR 時依實際位置）
+- `~/.cursor/skills/edict`
 
-終端機也可執行 `edict update`，或 `edict update --session <本對話ID>`。CLI 只更新安裝檔案並回傳待重讀路徑；目前對話須由代理實際讀完指引後才算套用，CLI 不會向聊天注入內容。即使已是最新版，對話命令仍會重新讀取規則。
+保留套件以外的檔案及 EDICT_HOME 內資料。Windows 安裝與移除未完整驗證，不直接套用 POSIX 連結操作。
 
-### 舊版第一次升級
-
-0.3.0-beta.1 與更舊版本尚無 update 命令，需先升級安裝副本一次。在 Edict 套件目錄執行；先確認 `git status --short` 沒有本機修改，再執行後續命令：
-
-```sh
-git status --short
-git fetch origin tag v0.3.0-beta.2
-git switch --detach v0.3.0-beta.2
-node bin/edict.mjs --version
-```
-
-接著回原對話執行 `/edict update`。安裝連結保留原路徑時不需搬動技能；固定版本更新會影響所有共用該目錄的後續 CLI 呼叫，其他對話只會在使用者要求時重讀。保留本機變更，不使用強制重設。若安裝副本無法直接升級，可先保留舊目錄、將指定版本 clone 到新目錄，依「移除安裝」核對並移除舊連結後換裝；對話資料保留。
-
-安裝連結指向本機儲存庫，不必向各工作專案複製技能。0.1 版專案檔案不自動刪除或覆寫，僅限在本對話首次 init 前，由代理依使用者要求用 `init --yes --session <ID> --import-config <舊config.json>` 匯入設定。已有設定的對話改用 `edict config set <角色> --session <ID> ...` 逐角色調整，不能再次匯入覆寫。舊版同名專案技能可能仍被讀取，升級時應先備份並停用，避免入口混用。本版不擅自刪除專案檔案。
-
-每台電腦各自登入代理；GitHub 分享程式，不分享對話狀態或憑證。
-
-## 移除安裝
-
-先在使用中的對話執行 `/edict off`（Codex 為 `$edict off`），並確認已派工作已結束；off 本身不取消工作。以下為 macOS／Linux 的預設安裝位置，確認是指向本套件的符號連結後，只移除連結本身，不刪除整個技能資料夾：
-
-- `~/.local/bin/edict`：指向本套件的 `bin/edict.mjs`。
-- `~/.agents/skills/edict`：指向本套件的 `skills/edict`。
-- `~/.claude/skills/edict`：指向上述共用技能；有設定 CLAUDE_CONFIG_DIR／ORCA_CLAUDE_CONFIG_DIR 時以實際位置為準。
-- `~/.cursor/skills/edict`：指向上述共用技能。
-
-自訂 `--bin-dir` 或 `--user-home` 時依原安裝位置處理。其他檔案、一般資料夾或指向其他套件的連結須保留。`~/.config/edict`（或自訂 EDICT_HOME）包含對話狀態與收據，移除指令及技能連結時保留；如需清除，先確認沒有未完成工作並另行備份。Windows 安裝與移除尚未驗證，不直接套用上述連結操作。
-
-## 驗證
+## 開發驗證
 
 ```sh
 npm ci --ignore-scripts
@@ -147,12 +107,4 @@ npm test
 npm run check
 ```
 
-CI 在 push 到 main 與對 main 的 pull request 執行上述檢查；Windows 另跑更新器的本機 Git 整合測試及語法檢查。所有工作只有 contents:read 權限，不使用真實代理或帳號憑證。測試包含對話隔離、開關、設定與模型參數、失敗不重派、相依與衝突排程、版本查詢、相容性檢查、更新時的版本選擇、狀態保留與本機修改攔截，以及安裝不修改代理設定。模擬 Orca 不能證明供應商接受特定模型；技能指令不能代替各代理多輪對話與壓縮後的實測。
-
-角色來源與適用範圍見 [NOTICE.md](NOTICE.md)。
-
-## 狀態鎖檔與收據恢復
-
-寫入狀態時，鎖檔記錄本機程序 PID、建立時間及主機名稱。同主機的持有程序已不存在時，下一次 init、config 或 off 會清除殘留鎖後重試；空白或無有效資訊的舊鎖需超過 30 秒才處理，讓新鎖有時間寫入資訊。程序仍存在、主機不同或無法確認時不依鎖齡強制清除，最多等待 500 毫秒後回報鎖檔路徑。可先確認持有程序是否仍在寫入；不要直接刪除活躍鎖。此恢復機制尚未驗證跨主機共用狀態目錄的情形。
-
-派工收到 Orca 回應但狀態寫入失敗時，CLI 仍輸出原始收據，並嘗試另存到 EDICT_HOME/receipts（預設 ~/.config/edict/receipts），stderr 顯示檔案路徑。協調者應保存收據、向 Orca 核對 Run／Task／Dispatch，待狀態可寫後補記；不能重新派出同一工作。若備份也因磁碟或權限失敗，須保存 stdout 的原始收據，不能只依 status 缺少紀錄判定派工未發生。
+測試使用隔離資料及模擬原生介面，不使用供應商憑證。設計與尚未驗收的能力見 [階層協作設計](docs/hierarchical-orchestration-design.md)；設計目標不自動成為本實作的已驗證功能。

@@ -69,11 +69,14 @@ test('CLI updates across rewritten history and preserves all conversation state 
   const f = fixture(t, { rewrite: true });
   const project = path.join(f.root, 'actual-project'); fs.mkdirSync(project);
   fs.writeFileSync(path.join(project, 'unfinished.txt'), 'Keep my current work');
-  activate('claude:active', defaults('codex', 'chosen-model'), project);
+  const config=defaults('codex','chosen-model');
+  config.positionOverrides.bingbu={executor:{agent:'claude',model:null,effort:null}};
+  activate('claude:active', config, project);
   recordDispatch('claude:active', { ok: true, result: { taskId: 'task-running', dispatchId: 'ctx-running', runId: 'run-original' } }, 'bingbu');
   activate('claude:off', defaults(), project); deactivate('claude:off');
   activate('cursor:pending', defaults(), project, { coordinator: 'cursor' });
   const snapshots = ['claude:active', 'claude:off', 'cursor:pending'].map(id => [sessionFile(id), fs.readFileSync(sessionFile(id))]);
+  for(const [,raw] of snapshots){const state=JSON.parse(raw);assert.equal(state.version,2);assert.equal(state.config.version,2);}
   const result = f.cli(['update', '--session', 'claude:active'], f.rows);
   assert.equal(result.status, 0, result.stderr);
   const receipt = JSON.parse(result.stdout);
@@ -86,6 +89,7 @@ test('CLI updates across rewritten history and preserves all conversation state 
   assert.equal(receipt.reload.files.length, 4);
   for (const file of receipt.reload.files) assert.match(fs.readFileSync(file, 'utf8'), /Test release 0\.3\.0-beta\.2/);
   for (const [file, raw] of snapshots) assert.deepEqual(fs.readFileSync(file), raw);
+  assert.deepEqual(JSON.parse(fs.readFileSync(sessionFile('claude:active'),'utf8')).config.positionOverrides,config.positionOverrides);
   assert.equal(fs.readFileSync(path.join(project, 'unfinished.txt'), 'utf8'), 'Keep my current work');
   assert.equal(f.git(f.install, ['rev-parse', 'HEAD']), f.expected);
   assert.equal(f.git(f.install, ['status', '--porcelain']), '');
