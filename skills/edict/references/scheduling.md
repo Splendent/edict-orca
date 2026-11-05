@@ -38,7 +38,7 @@ root 先用 run open 建立 Run，再以無 work 的 team ensure 建立中書、
 edict team send "$TARGET_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-message.json
 ```
 
-三省按合法職權交涉；六部只與尚書交涉，各部不得直接指揮其他部門。executor 依原生 ask／worker_done 向直接頭領報告，不能以 team send 冒充頭領。`team send` 不切模型，已 settled executor 的明確續辦必須回到原工作與同一方案世代，重新取得原範圍及資源；不向正在執行或仍未知的 executor 追加未追蹤實作。
+三省按合法職權交涉；六部只與尚書交涉，各部不得直接指揮其他部門。executor 依原生 ask／worker_done 向直接頭領報告，不能以 team send 冒充頭領。`team send` 不切模型，已 settled executor 的明確續辦必須回到原工作與同一方案世代，重新取得原範圍及資源；不向正在執行或仍未知的 executor 追加未追蹤實作。Edict 成員之間一律用 `team send`，不用裸原生 send 重開 executor：裸送出的 follow-up Dispatch 不會綁回成員，該 handle 之後的 Edict 命令會被判「沒有有效團隊成員綁定」。Orca 把續辦投遞到仍開著的 follow-up 時，收據只有 `to_handle=dispatch:<id>`，Edict 會向 Orca 查該 Dispatch 的 Task 後綁定；查不到時記為 unknown，待可查時由原發起者 `recover` 完成綁定，不重送。
 
 kind 只接受 handoff 或 report，省略時是 handoff。handoff 受 active、Done、pause、cancel、核可及資源檢查。完成通知或停止結果應另寫 `/tmp/edict-report.json`：
 
