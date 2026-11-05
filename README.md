@@ -12,7 +12,7 @@
 
 本專案將 [cft0808/edict](https://github.com/cft0808/edict) 的三省六部流程改編為 Orca 對話可使用的命令列與手動技能。來源與改編責任見 [NOTICE.md](NOTICE.md)。
 
-0.4.0-beta.1 使用 v2 資料。已在 macOS、Orca 1.4.249 與 Codex 驗證三省、部尚書及郎中的完整交接、刑部驗收、門下結案與限定範圍取消；證據見 [原生驗證紀錄](docs/verification/native-2026-11-05.json)。這不代表所有代理、主機、恢復或任意開發任務均已實測。
+0.4 系列使用 v2 資料。已在 macOS、Orca 1.4.249 與 Codex 驗證三省、部尚書及郎中的完整交接、刑部驗收、門下結案與限定範圍取消；證據見 [原生驗證紀錄](docs/verification/native-2026-11-05.json)。這不代表所有代理、主機、恢復或任意開發任務均已實測。
 
 在目前對話手動執行一次 `/edict init`，選擇代理與模型並完成啟用後，正常交代工作；一般問答直接回答。Codex 原生入口是 `$edict init`。其他對話預設停用，不安裝 hook、背景輪詢或常駐模型程序。
 
@@ -35,7 +35,7 @@
 1. 取得已發布版本並檢查來源。
 
    ```sh
-   git clone --branch v0.4.0-beta.1 https://github.com/Splendent/edict-orca.git
+   git clone --branch v0.4.0-beta.2 https://github.com/Splendent/edict-orca.git
    cd edict-orca
    node scripts/install-local.mjs --dry-run
    ```
@@ -47,7 +47,7 @@
    node bin/edict.mjs --version
    ```
 
-   預期版本為 `edict-orca 0.4.0-beta.1`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
+   預期版本為 `edict-orca 0.4.0-beta.2`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
 
 3. 在 Orca 的 **Settings → Orchestration → Nested worker depth** 設定至少 `3`。
 4. 在要工作的對話執行 `/edict init`；Codex 執行 `$edict init`。依提示選擇代理與模型，完成後查詢 `/edict status` 或 `$edict status`。

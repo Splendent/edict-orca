@@ -9,7 +9,7 @@ Edict 將工作拆分、派工與驗收保存在目前對話。安裝技能只�
 1. 在獨立目錄取得發布版。
 
    ```sh
-   git clone --branch v0.4.0-beta.1 https://github.com/Splendent/edict-orca.git
+   git clone --branch v0.4.0-beta.2 https://github.com/Splendent/edict-orca.git
    cd edict-orca
    ```
 
@@ -28,7 +28,7 @@ Edict 將工作拆分、派工與驗收保存在目前對話。安裝技能只�
    node bin/edict.mjs --version
    ```
 
-   預期顯示 `edict-orca 0.4.0-beta.1`。連結指向此原始碼目錄，安裝後須保留它。若 `edict` 不在 PATH，可直接使用 `node /絕對路徑/edict-orca/bin/edict.mjs`。
+   預期顯示 `edict-orca 0.4.0-beta.2`。連結指向此原始碼目錄，安裝後須保留它。若 `edict` 不在 PATH，可直接使用 `node /絕對路徑/edict-orca/bin/edict.mjs`。
 
 4. 在 Orca **Settings → Orchestration → Nested worker depth** 確認深度至少為 `3`。
 5. 回到要工作的對話，依下節手動啟用。
