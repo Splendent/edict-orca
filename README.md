@@ -1,10 +1,115 @@
 # Edict for Orca
 
-將 [cft0808/edict](https://github.com/cft0808/edict) 的三省六部流程改編為目前 Orca 對話可使用的命令列與手動技能。原對話整理需求，中書規劃、門下審查、尚書管理六部，各省部頭領可管理多位執行代理。來源與改編責任見 [NOTICE.md](NOTICE.md)。
+三省六部多代理協作，直接在目前的 Orca 對話中規劃、派工、驗收與結案。
+
+[![CI](https://github.com/Splendent/edict-orca/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Splendent/edict-orca/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Splendent/edict-orca?include_prereleases)](https://github.com/Splendent/edict-orca/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+各省部由頭領管理自己的執行代理。一道指令包含多件工作時，中書拆成可獨立驗收的工作，門下審查，尚書交給對應部門；各部可在授權範圍內平行執行，由頭領核對成果後交涉與彙整。
+
+**[快速開始](#快速開始) · [角色架構](#角色架構) · [使用範例](#使用範例) · [文件導覽](#文件導覽) · [問題回報](https://github.com/Splendent/edict-orca/issues/new/choose)**
+
+本專案將 [cft0808/edict](https://github.com/cft0808/edict) 的三省六部流程改編為 Orca 對話可使用的命令列與手動技能。來源與改編責任見 [NOTICE.md](NOTICE.md)。
 
 0.4.0-beta.1 使用 v2 資料。已在 macOS、Orca 1.4.249 與 Codex 驗證三省、部尚書及郎中的完整交接、刑部驗收、門下結案與限定範圍取消；證據見 [原生驗證紀錄](docs/verification/native-2026-11-05.json)。這不代表所有代理、主機、恢復或任意開發任務均已實測。
 
 在目前對話手動執行一次 `/edict init`，選擇代理與模型並完成啟用後，正常交代工作；一般問答直接回答。Codex 原生入口是 `$edict init`。其他對話預設停用，不安裝 hook、背景輪詢或常駐模型程序。
+
+## 提供的功能
+
+| 功能 | 實際行為 |
+| --- | --- |
+| 頭領與執行代理分工 | 中書令管理舍人、侍中管理給事中、尚書僕射管理六部尚書，各部尚書管理郎中 |
+| 三個獨立決策 | 門下方案放行、刑部成果驗收、門下結案，分別保存證據 |
+| 多工作派工 | 依工作世代、相依與讀寫範圍管理委派，核對衝突及資源占用 |
+| 角色與職位設定 | 明確選擇 Claude Code、Codex 或 Cursor，保存代理、模型及推理強度 |
+| 工作控制與恢復 | 暫停、恢復、取消及重新開始；未確認的原生結果保留操作收據供核對 |
+
+本專案以 Orca 原生 Run、Task、Dispatch 與對話交涉運作。原版的網頁看板、OpenClaw Gateway、通訊軟體通知與新聞排程不在此套件內。
+
+## 快速開始
+
+以下為 macOS／POSIX shell 操作；Windows 完整安裝尚未驗收。需要 Node.js 20 以上、Git、Orca，以及已登入的代理工具。
+
+1. 取得已發布版本並檢查來源。
+
+   ```sh
+   git clone --branch v0.4.0-beta.1 https://github.com/Splendent/edict-orca.git
+   cd edict-orca
+   node scripts/install-local.mjs --dry-run
+   ```
+
+2. 確認安裝位置後建立指令與技能連結。
+
+   ```sh
+   node scripts/install-local.mjs
+   node bin/edict.mjs --version
+   ```
+
+   預期版本為 `edict-orca 0.4.0-beta.1`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
+
+3. 在 Orca 的 **Settings → Orchestration → Nested worker depth** 設定至少 `3`。
+4. 在要工作的對話執行 `/edict init`；Codex 執行 `$edict init`。依提示選擇代理與模型，完成後查詢 `/edict status` 或 `$edict status`。
+5. 直接交代工作，例如「修正登入錯誤、更新使用文件，附上各項驗證結果」。代理依流程分工，使用者不必逐層轉交。
+
+從 v1 使用新版時，請先讀 [新狀態與更新方式](docs/getting-started.md#從舊版開始使用-v2)。完整安裝、聊天選項、終端機初始化及預期結果見 [首次使用指南](docs/getting-started.md)。
+
+## 角色架構
+
+```mermaid
+flowchart TB
+    U[使用者／原對話太子] --> Z[中書令]
+    U --> M[侍中]
+    U --> S[尚書僕射]
+    Z --> ZW[中書舍人：調查與規劃]
+    M --> MW[給事中：獨立查證]
+    Z -.方案送審.-> M
+    M -.核可後交辦.-> S
+    S --> H[戶部尚書]
+    S --> L[禮部尚書]
+    S --> B[兵部尚書]
+    S --> X[刑部尚書]
+    S --> G[工部尚書]
+    S --> R[吏部尚書]
+    H --> HW[戶部郎中]
+    L --> LW[禮部郎中]
+    B --> BW[兵部郎中]
+    X --> XW[刑部郎中]
+    G --> GW[工部郎中]
+    R --> RW[吏部郎中]
+```
+
+實線表示管理及派工關係，虛線表示業務交接。三省頭領由原對話平行建立；門下與尚書須取得該工作的正式授權才能處理業務。執行代理不能再建立下層代理。
+
+| 角色 | 頭領／執行職位 | 責任 |
+| --- | --- | --- |
+| 中書省 | 中書令／中書舍人 | 理解需求、調查、拆分工作、保存正式方案 |
+| 門下省 | 侍中／給事中 | 審查方案、退回問題、核對結案證據 |
+| 尚書省 | 尚書僕射／左右司郎中 | 協調六部、追蹤相依、彙整結果 |
+| 戶部、禮部、兵部 | 各部尚書／郎中 | 資料與成本、文件與規範、工程實作 |
+| 刑部、工部、吏部 | 各部尚書／郎中 | 獨立驗收、建置與基礎設施、代理設定與權限 |
+
+必要實作須交付有效成果並結束原生執行，再經刑部驗收及門下結案才進入 Done。暫停關閉新准入；已送出的操作仍需核對。取消須等原生停止或結束證據成立，才可宣稱取消完成。
+
+詳細授權、世代、成果及決策資料見 [角色與資料契約](skills/edict/references/workflow.md)。
+
+## 使用範例
+
+以下是工作要求示例，不是執行結果紀錄。
+
+```text
+修正登入錯誤、更新使用文件，並確認安裝步驟可用。
+每項工作分別列出交付物及驗證結果；需要外部發布時先交給我確認。
+```
+
+中書整理工作與相依，門下核對方案；尚書將工程交兵部、文件交禮部、安裝與建置交工部，各部頭領分派自己的執行代理。只有實際需要的部門才派工，是否能平行取決於方案及檔案範圍。刑部驗收成果，尚書彙整，再由門下確認結案。
+
+```text
+先暫停這項工作的新增派工，列出目前仍在執行及結果未確認的操作。
+```
+
+原對話按指定工作套用控制並查證狀態；不把「已收到取消要求」當成程序已停止。內部 JSON 與原生收據不需要由使用者逐次輸入。
 
 ## 安裝與環境
 
@@ -78,7 +183,7 @@ Cursor 作為目前對話的協調者時，init 帶 `--coordinator cursor`。首
 | v2 設定與工作政策 | 本機模擬測試涵蓋角色、核可、世代、控制、收據及範圍 | 模擬身分不等於原生身分隔離驗收 |
 | macOS、Orca 1.4.249、Codex | 具原生身分的中書送審、門下核可、尚書→部尚書→郎中、刑部驗收、門下結案與限定範圍取消成功 | 有界報告任務；不涵蓋任意開發任務、所有恢復或取消交錯 |
 | Claude Code、Codex、Cursor | 可明確設定各角色及職位的代理與模型 | 不宣稱各供應商完整多輪、所有模型及壓縮恢復皆成功 |
-| CI | 定義 macOS／Ubuntu Node 20／24 測試與 Windows Node 24 更新器測試 | 以對應提交的實際 CI 結果為準，不推定本工作目錄已在 CI 成功 |
+| v0.4.0-beta.1 CI | [發布提交的五組 CI 成功](https://github.com/Splendent/edict-orca/actions/runs/41993409294)：macOS／Ubuntu Node 20／24 完整測試與 Windows Node 24 更新器測試 | 不代表 Windows 完整安裝或所有平台原生階層流程已驗收 |
 
 `doctor` 只讀取 help 與執行環境狀態，不派工、不消費信箱。它檢查既有基本介面，不認證完整階層流程、請求去重、Nested worker depth、帳號或特定模型。工作狀態以 Orca 為原生來源；Edict 另保存委派、控制、決策、證據及操作意圖。
 
@@ -108,3 +213,27 @@ npm run check
 ```
 
 測試使用隔離資料及模擬原生介面，不使用供應商憑證。設計與尚未驗收的能力見 [階層協作設計](docs/hierarchical-orchestration-design.md)；設計目標不自動成為本實作的已驗證功能。
+
+## 專案結構
+
+| 路徑 | 內容 |
+| --- | --- |
+| `bin/`、`scripts/` | CLI 入口與本機安裝器 |
+| `src/` | 設定、對話狀態、階層工作流程、原生 Orca 介面與更新器 |
+| `skills/edict/` | 手動技能、協調流程及角色資料契約 |
+| `test/`、`.github/` | 自動測試、CI、議題／PR 範本及維護設定 |
+| `docs/` | 使用指南、設計、研究及實測證據 |
+
+## 文件導覽
+
+| 需求 | 文件 |
+| --- | --- |
+| 安裝、首次啟用、聊天設定與更新 | [首次使用指南](docs/getting-started.md) |
+| 技能未出現、初始化、深度限制與結果未確認 | [故障排除](docs/troubleshooting.md) |
+| 代理協調、角色權限、資料及恢復 | [協調流程](skills/edict/references/active.md)、[工作契約](skills/edict/references/workflow.md)、[派工與恢復](skills/edict/references/scheduling.md) |
+| 設計及實測依據 | [階層設計](docs/hierarchical-orchestration-design.md)、[控制語意](docs/research/control-semantics.md)、[原生驗證](docs/verification/native-2026-11-05.json) |
+| 開發、回報、授權與維護 | [貢獻指南](CONTRIBUTING.md)、[安全政策](SECURITY.md)、[行為準則](CODE_OF_CONDUCT.md)、[維護指南](docs/maintainers.md)、[來源](NOTICE.md)、[MIT 授權](LICENSE) |
+
+## 回報與貢獻
+
+一般問題、可重現錯誤與功能提案請使用 [議題範本](https://github.com/Splendent/edict-orca/issues/new/choose)。公開日誌前移除憑證、私有路徑及對話內容；安全漏洞依 [安全政策](SECURITY.md) 處理。提交修改前請讀 [貢獻指南](CONTRIBUTING.md)。

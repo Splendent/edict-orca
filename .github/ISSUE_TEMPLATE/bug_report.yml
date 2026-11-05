@@ -1,0 +1,40 @@
+name: 錯誤回報
+description: 回報可重現的安裝、設定或協作流程錯誤
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        疑似安全漏洞請依 SECURITY.md 私下回報。公開前移除憑證、私有路徑與對話內容；請勿上傳整份 EDICT_HOME。
+  - type: textarea
+    id: environment
+    attributes:
+      label: 執行環境
+      description: 套件版本或 commit、Node.js、Orca、作業系統與代理工具版本。
+      placeholder: |
+        edict-orca:
+        Node.js:
+        Orca:
+        作業系統:
+        代理工具:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小重現步驟
+      description: 使用隔離資料列出操作；若結果未確認，請保留原操作，不為了重現重複派工。
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 預期與實際結果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 必要日誌與證據
+      description: 以 <REDACTED> 取代敏感值；可省略不影響重現的識別碼。
+      render: text
