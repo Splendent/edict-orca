@@ -80,35 +80,46 @@ if(args.includes('--help')) {
   console.log(flags.filter(flag=>!(command===${JSON.stringify(missingCommand)}&&flag===${JSON.stringify(missingFlag)})).join(' '));
 }
 else if(args[0]==='status') console.log(JSON.stringify({ok:true,result:{runtime:{state:'ready',reachable:${ready},appVersion:'test'}}}));
-else {console.log(JSON.stringify({ok:${!fail},failedStage:${fail ? "'launch'" : 'null'},dispatchId:'fake-dispatch',taskId:'fake-task',runId:'fake-run'})); process.exitCode=${fail ? 1 : 0};}
+else if(args[1]==='run-create'||args[1]==='run-current') console.log(JSON.stringify({ok:true,result:{run:{id:'fake-run',coordinator_handle:'fake-root'}}}));
+else {
+ if(process.env.LOCK_SESSION) {
+  const {createHash}=await import('node:crypto'),os=await import('node:os');
+  const file=process.env.EDICT_HOME+'/sessions/'+createHash('sha256').update('codex:test-thread').digest('hex')+'.json.lock';
+  fs.writeFileSync(file,JSON.stringify({pid:Number(process.env.LIVE_LOCK_PID),host:os.hostname()}));
+ }
+ const value=process.env.START_RESPONSE?JSON.parse(process.env.START_RESPONSE):{ok:${!fail},result:{dispatchId:'fake-dispatch',taskId:'fake-task',runId:'fake-run',failedStage:${fail ? "'launch'" : 'null'}}};
+ console.log(JSON.stringify(value));if(!value.ok)process.exitCode=1;
+}
 `);
   fs.chmodSync(file, 0o755);
   const log = path.join(dir, 'calls.jsonl');
   return { env: { ORCA_CLI_COMMAND: file, CALL_LOG: log, ORCA_TEST_IDENTITY: 'original-pane' }, log };
 }
 
-test('dispatch delivers literal task via stdin, exact argv, identity and cwd preserved', t => {
+test('authorized team creation delivers literal stdin, argv, identity and cwd', t => {
   const dir = setup(t);
   const runtime = fakeOrca(t, dir);
-  run(dir, ['config', 'set', 'bingbu', '--agent', 'claude', '--model', 'model with spaces']);
+  run(dir, ['config', 'set', 'zhongshu', '--agent', 'claude', '--model', 'model with spaces']);
   const task = 'Quote " \' `touch MUST_NOT_EXIST` $(touch MUST_NOT_EXIST)\nSecond line';
-  const result = run(dir, ['dispatch', 'bingbu', '--spec-file', '-', '--run', 'fake-run', '--title', 'a "title"'], { env: runtime.env, input: task });
+  assert.equal(run(dir, ['run', 'open', '--objective', 'Literal task'], { env: runtime.env }).status, 0);
+  const result = run(dir, ['team', 'ensure', 'zhongshu', '--spec-file', '-', '--run', 'fake-run'], { env: runtime.env, input: JSON.stringify({spec:task}) });
   assert.equal(result.status, 0, result.stderr);
-  const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
+  const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse).filter(x=>x.args[1]==='worker-start');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].identity, 'original-pane');
   assert.equal(fs.realpathSync(calls[0].cwd), fs.realpathSync(dir));
   assert.ok(calls[0].body.includes(task));
-  assert.ok(calls[0].body.includes('worker_done'));
+  assert.match(calls[0].body,/下屬仍在工作時頭領不能宣告整項完成/);
   assert.equal(calls[0].args[calls[0].args.indexOf('--model') + 1], 'model with spaces');
   assert.equal(fs.existsSync(path.join(dir, 'MUST_NOT_EXIST')), false);
 });
 
-test('same-project child dispatch needs no repo and never falls back to a top-level worktree', t => {
+test('native adapter preserves child-worktree selectors and names as literal argv', t => {
   const dir = setup(t);
   const runtime = fakeOrca(t, dir);
-  for (const extra of [[], ['--name', 'child-bingbu']]) {
-    const result = run(dir, ['dispatch', 'bingbu', '--spec-file', '-', '--worktree', 'new-child', ...extra], { env: runtime.env, input: 'Implement in an isolated child worktree' });
+  for (const name of [undefined, 'child-bingbu']) {
+    const script = `import {NativeRuntime} from ${JSON.stringify(new URL('../src/native.mjs',import.meta.url).href)};new NativeRuntime().start('fake-run',{agent:'codex',model:null,effort:null},'Literal task',{worktree:'new-child',title:'child',name:${JSON.stringify(name)}},'request-child');`;
+    const result = spawnSync(process.execPath,['--input-type=module','-e',script],{cwd:dir,encoding:'utf8',env:{...process.env,...runtime.env}});
     assert.equal(result.status, 0, result.stderr);
   }
   const calls = fs.readFileSync(runtime.log, 'utf8').trim().split('\n').map(JSON.parse);
@@ -122,70 +133,145 @@ test('same-project child dispatch needs no repo and never falls back to a top-le
   assert.equal(calls[1].args[calls[1].args.indexOf('--name') + 1], 'child-bingbu');
 });
 
-test('failed dispatch is returned intact and never retried', t => {
+test('failed authorized start preserves the native receipt and is not retried', t => {
   const dir = setup(t);
   const runtime = fakeOrca(t, dir, { fail: true });
-  const result = run(dir, ['dispatch', 'xingbu', '--spec-file', '-'], { env: runtime.env, input: 'Review only' });
+  assert.equal(run(dir,['run','open','--objective','Failure receipt'],{env:runtime.env}).status,0);
+  const result = run(dir, ['team','ensure','zhongshu','--run','fake-run','--spec-file','-'], { env: runtime.env, input: JSON.stringify({spec:'Review only'}) });
   assert.equal(result.status, 1);
-  assert.equal(JSON.parse(result.stdout).failedStage, 'launch');
-  assert.match(result.stderr, /不得重新派工/);
-  assert.equal(fs.readFileSync(runtime.log, 'utf8').trim().split('\n').length, 1);
+  const db=JSON.parse(fs.readFileSync(path.join(homes.get(dir),'workflow.json'),'utf8'));
+  const operations=Object.values(db.runs['fake-run'].operations);
+  assert.equal(operations.length,1);
+  assert.equal(operations[0].state,'unknown');
+  assert.equal(operations[0].rawReceipt.result.failedStage,'launch');
+  assert.ok(operations[0].requestId);
+  const calls=fs.readFileSync(runtime.log,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(x=>x.args[1]==='worker-start').length,1);
 });
-test('successful Orca receipt remains available when the session write is locked', t => {
-  const dir=setup(t);
-  const file=path.join(dir,'receipt-orca.mjs');
-  const receipt={ok:true,result:{dispatchId:'ctx-recovered',taskId:'task-recovered',runId:'run-recovered'}};
-  fs.writeFileSync(file,`#!/usr/bin/env node\nimport fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';fs.readFileSync(0,'utf8');const file=path.join(process.env.EDICT_HOME,'sessions',createHash('sha256').update('codex:test-thread').digest('hex')+'.json.lock');fs.writeFileSync(file,JSON.stringify({pid:Number(process.env.LIVE_LOCK_PID),createdAt:Date.now(),host:os.hostname()}));fs.appendFileSync(process.env.CALL_LOG,'called\\n');console.log(${JSON.stringify(JSON.stringify(receipt))});\n`);
-  fs.chmodSync(file,0o755);
-  const log=path.join(dir,'dispatch-calls.txt');
-  const result=run(dir,['dispatch','bingbu','--spec-file','-'],{input:'Implement within the permitted scope',env:{ORCA_CLI_COMMAND:file,LIVE_LOCK_PID:String(process.pid),CALL_LOG:log}});
-  assert.equal(result.status,1);
-  assert.deepEqual(JSON.parse(result.stdout),receipt);
-  assert.match(result.stderr,/不得重複派工/);
-  assert.equal(fs.readFileSync(log,'utf8'),'called\n');
-  const backups=fs.readdirSync(path.join(homes.get(dir),'receipts'));
-  assert.equal(backups.length,1);
-  const backup=JSON.parse(fs.readFileSync(path.join(homes.get(dir),'receipts',backups[0]),'utf8'));
-  assert.equal(backup.session,'codex:test-thread');
-  assert.deepEqual(JSON.parse(backup.stdout),receipt);
+test('workflow receipt saving is independent from a contended session index', t => {
+  const dir=setup(t),runtime=fakeOrca(t,dir);
+  assert.equal(run(dir,['run','open','--objective','Preserve receipt'],{env:runtime.env}).status,0);
+  const result=run(dir,['team','ensure','zhongshu','--run','fake-run','--spec-file','-'],{
+    input:JSON.stringify({spec:'Preserve receipt under session lock'}),
+    env:{...runtime.env,LOCK_SESSION:'1',LIVE_LOCK_PID:String(process.pid)},
+  });
+  assert.equal(result.status,0,result.stderr);
+  const output=JSON.parse(result.stdout);
+  assert.equal(output.confirmed,true);
+  assert.equal(output.operation.receipt.dispatchId,'fake-dispatch');
+  const db=JSON.parse(fs.readFileSync(path.join(homes.get(dir),'workflow.json'),'utf8'));
+  assert.deepEqual(db.runs['fake-run'].operations[output.operation.id].receipt,output.operation.receipt);
+  const calls=fs.readFileSync(runtime.log,'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(calls.filter(x=>x.args[1]==='worker-start').length,1);
 });
-test('incomplete or mismatched single-dispatch receipts fail with a backup and no retry',t=>{
-  for(const payload of [
-    {ok:true,result:{taskId:'task-only',runId:'run-one'}},
-    {ok:true,result:{dispatchId:'ctx-only',runId:'run-one'}},
-    {ok:true,result:{dispatchId:'ctx-one',taskId:'task-one'}},
-    {ok:true,result:{dispatchId:'ctx-one',taskId:'task-one',runId:'wrong-run'}},
-    {ok:false,result:{dispatchId:'ctx-one',taskId:'task-one',runId:'run-one'}},
+
+test('incomplete and wrong-Run receipts remain durable unknown operations without retries',t=>{
+  for(const receipt of [
+    {taskId:'task-only',runId:'fake-run'},
+    {dispatchId:'ctx-only',runId:'fake-run'},
+    {dispatchId:'ctx-one',taskId:'task-one'},
+    {dispatchId:'ctx-one',taskId:'task-one',runId:'wrong-run'},
+    {dispatchId:123,taskId:'task-one',runId:'fake-run'},
+    {dispatchId:' ',taskId:'task-one',runId:'fake-run'},
   ]) {
-    const dir=setup(t),file=path.join(dir,'incomplete.mjs'),log=path.join(dir,'calls.txt');
-    fs.writeFileSync(file,"#!/usr/bin/env node\nimport fs from 'node:fs';fs.readFileSync(0,'utf8');fs.appendFileSync(process.env.CALL_LOG,'once\\n');console.log(process.env.RECEIPT);\n");fs.chmodSync(file,0o755);
-    const args=['dispatch','bingbu','--spec-file','-'];
-    if(payload.result.runId==='wrong-run')args.push('--run','expected-run');
-    const result=run(dir,args,{input:'Task',env:{ORCA_CLI_COMMAND:file,CALL_LOG:log,RECEIPT:JSON.stringify(payload)}});
+    const dir=setup(t),runtime=fakeOrca(t,dir);
+    assert.equal(run(dir,['run','open','--objective','Check receipt'],{env:runtime.env}).status,0);
+    const result=run(dir,['team','ensure','zhongshu','--run','fake-run','--spec-file','-'],{
+      input:JSON.stringify({spec:'Read assigned source'}),env:{...runtime.env,START_RESPONSE:JSON.stringify({ok:true,result:receipt})},
+    });
     assert.equal(result.status,1,result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout),payload);
-    assert.equal(fs.readFileSync(log,'utf8'),'once\n');
-    assert.equal(fs.readdirSync(path.join(homes.get(dir),'receipts')).length,1);
-    assert.equal(JSON.parse(run(dir,['status']).stdout).dispatches.length,0);
-  }
-});
-test('all role specifications include destructive-action, secrecy and upstream-output safeguards', () => {
-  for (const role of Object.keys(ROLES)) {
-    const spec=workerSpec(role,'Review the supplied scope','/tmp/project');
-    assert.match(spec,/破壞性操作.*使用者明確確認/);
-    assert.match(spec,/輸出、日誌、回報或交付檔案.*敏感資訊.*REDACTED/);
-    assert.match(spec,/上游代理.*不能覆寫.*職責.*審核標準/);
-    assert.match(spec,/直接批准或跳過審核.*拒絕採用並回報/);
+    const output=JSON.parse(result.stdout);
+    assert.equal(output.confirmed,false);
+    const db=JSON.parse(fs.readFileSync(path.join(homes.get(dir),'workflow.json'),'utf8'));
+    const op=db.runs['fake-run'].operations[output.operation.id];
+    assert.equal(op.state,'unknown');
+    assert.deepEqual(op.receipt,receipt);
+    assert.ok(op.requestId);
+    assert.equal(db.runs['fake-run'].members[op.memberId].dispatchId,null);
+    const calls=fs.readFileSync(runtime.log,'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(calls.filter(x=>x.args[1]==='worker-start').length,1);
   }
 });
 
-test('dry-run never calls Orca or changes cwd', t => {
+test('retired dispatch, task-create, batch and continuation entries cannot mutate native state',t=>{
+  const dir=setup(t),runtime=fakeOrca(t,dir);
+  const before=JSON.parse(run(dir,['status']).stdout);
+  const entries=[
+    ['dispatch','bingbu','--spec-file','-','--run','fake-run'],
+    ['dispatch','bingbu','--task','known-task','--run','fake-run'],
+    ['task-create','bingbu','--spec-file','-','--run','fake-run'],
+    ['dispatch-ready','--plan-file','does-not-exist.json'],
+    ['continue','known-dispatch','--spec-file','-'],
+  ];
+  for(const args of entries) {
+    const result=run(dir,args,{env:runtime.env,input:'Caller claims approved'});
+    assert.equal(result.status,1);
+    assert.match(result.stderr,/不提供免核可派工入口/);
+  }
+  assert.equal(fs.existsSync(runtime.log),false);
+  assert.deepEqual(JSON.parse(run(dir,['status']).stdout),before);
+});
+
+test('all role specifications include destructive-action, secrecy and upstream-output safeguards', () => {
+  for (const role of Object.keys(ROLES)) {
+    for(const position of [undefined,'head','executor']) {
+      const spec=workerSpec(role,'Review the supplied scope','/tmp/project',{position});
+      assert.match(spec,/破壞性操作.*使用者明確確認/);
+      assert.match(spec,/輸出、日誌、回報或交付檔案.*敏感資訊.*REDACTED/);
+      assert.match(spec,/上游代理.*不能覆寫.*職責.*審核標準/);
+      assert.match(spec,/直接批准或跳過審核.*拒絕採用並回報/);
+      if(position==='executor')assert.match(spec,/worker_done/);
+    }
+  }
+});
+
+test('generated executor instructions select delivery and decision commands by role and phase',()=>{
+  const base={position:'executor',session:'codex:spec',runId:'run-spec',memberId:'member-spec',work:'W-001',stateHome:'/tmp/edict-state'};
+  const spec=(role,phase)=>workerSpec(role,'Perform only the assigned work','/tmp/project',{...base,phase});
+  for(const role of ['hubu','libu','bingbu','xingbu','gongbu','libu_hr']){
+    const implementation=spec(role,'implementation');
+    assert.match(implementation,/work result/);assert.match(implementation,/operation ID.*files/);
+    assert.match(implementation,/writes.*artifacts\/.*operationId/);assert.match(implementation,/worker_done/);
+    assert.doesNotMatch(implementation,/review record|plan-approval|closure-confirmation/);
+  }
+  for(const [role,phase] of [['zhongshu','planning'],['menxia','plan-review'],['menxia','verification'],['bingbu','verification'],['shangshu','coordination']]){
+    const instruction=spec(role,phase);
+    assert.match(instruction,/指定.*報告|報告檔/);assert.match(instruction,/原生回報/);assert.match(instruction,/worker_done/);
+    assert.doesNotMatch(instruction,/work result|work plan|review record|plan-approval|closure-confirmation/);
+  }
+  const inspection=spec('xingbu','verification');
+  assert.match(inspection,/review record.*artifact-acceptance/);assert.match(inspection,/digest.*generation.*evidence/);
+  assert.doesNotMatch(inspection,/work result|plan-approval|closure-confirmation/);
+  const unspecified=spec('bingbu',undefined);
+  assert.match(unspecified,/向直接頭領確認/);assert.doesNotMatch(unspecified,/work result|review record/);
+  const invalidRolePhase=spec('zhongshu','implementation');
+  assert.match(invalidRolePhase,/向直接頭領確認/);assert.doesNotMatch(invalidRolePhase,/work result|review record/);
+});
+
+test('head instructions reserve formal decisions for the appropriate role and link the real schema',()=>{
+  const options={position:'head',phase:'coordination'};
+  const head=role=>workerSpec(role,'Check the assigned evidence','/tmp/project',options);
+  assert.match(head('zhongshu'),/work plan/);assert.doesNotMatch(head('zhongshu'),/review record|plan-approval|closure-confirmation/);
+  assert.match(head('menxia'),/review record.*plan-approval.*closure-confirmation/);
+  assert.match(head('xingbu'),/review record.*artifact-acceptance/);assert.doesNotMatch(head('xingbu'),/plan-approval|closure-confirmation/);
+  assert.doesNotMatch(head('shangshu'),/review record|work result|plan-approval|closure-confirmation/);
+  const schema=path.join(ROOT,'skills/edict/references/workflow.md');assert.ok(fs.existsSync(schema));
+  for(const role of ['zhongshu','menxia','shangshu','bingbu','xingbu']){
+    const instruction=head(role);assert.ok(instruction.includes(schema));assert.match(instruction,/沒有已啟用設定不重新 init/);
+    assert.match(instruction,/不能繞過門下核可/);
+  }
+  assert.throws(()=>workerSpec('bingbu','Task','/tmp/project',{position:'root'}),/未知職位/);
+});
+
+test('retired dry-run entry is rejected without native calls or session changes', t => {
+  const beforeCwd=process.cwd();
   const dir = setup(t);
   const runtime = fakeOrca(t, dir);
   const result = run(dir, ['dispatch', 'menxia', '--spec-file', '-', '--dry-run'], { env: runtime.env, input: 'Review plan' });
-  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /不提供免核可派工入口/);
   assert.equal(fs.existsSync(runtime.log), false);
-  assert.equal(fs.realpathSync(JSON.parse(result.stdout).cwd), fs.realpathSync(dir));
+  assert.equal(process.cwd(),beforeCwd);
 });
 
 test('doctor checks interface and runtime without dispatch or consuming inbox', t => {

@@ -1,33 +1,43 @@
-# 已啟用對話的協調流程
+# 啟用後的協調流程
 
-只有 `edict context --session <原生對話ID>` 回傳啟用時才套用此文件。狀態檔存在不代表 active=true。一般問答、使用者追問或要求解釋直接回答，不啟動完整協作流程。
+本文件的業務流程只在原 session 的 `edict context --session <ID>` 回傳 active 啟用時套用。off 後仍可按原委派保存收據及傳送受限的唯讀 report，不因此恢復業務。保留原對話為 root，不另開主對話；一般問答與解釋直接回答，不建立 Run。先讀專案規則、使用者授權與本機 Orca `skills get orchestration` 的版本對應指南。
 
-你是目前對話的協調者，不另開主對話。按本對話設定透過 Orca 派工；不更換設定中的代理或模型。先讀專案規則，再載入本次 Orca 入口 `skills get orchestration` 的版本對應指南。首個 dispatch 未指定 Run 時，由 Orca 建立或沿用目前綁定；CLI 保存收據的 Run ID 供後續使用。新獨立工作目標須先用 Orca run-create，並在首次 dispatch 明確指定新 Run；舊工作的喚醒事件仍按原 Run 處理。
+session 與 Run 是不同識別。每個新獨立目標由原對話執行 `run open --objective`，保留回傳 id；其他內部命令明確帶 `--run`，不能猜目前最後一個 Run。所有角色沿用同一 EDICT_HOME 與 session，但原生身分分開。知道 session 或 member ID 不代表具有頭領權限。
 
-## 工作流程
+## 開始工作
 
-按下列階段進行。讀 [角色及審查規格](workflow.md) 取得各階段的輸入與交付格式。主對話保留派工權；worker 不自行派出其他 worker。
+以下五個階段是角色流程，使用者不需手動逐次轉交。具體 JSON 與命令見 [工作契約](workflow.md)。
 
-1. **需求與規劃**：你整理目標、邊界、授權與驗收；派 `zhongshu` 列可獨立驗收的工作單位、共同介面及真正相依。一般問答直接回答；同任務修正用 continue 交還原中書，附差異與未解問題。
-2. **方案審查**：首次派與作者獨立的 `menxia`，逐單位寫通過／退回、共同安全前提與放行範圍。同任務後續用 continue 交還原門下，先核對差異與未解問題；重大變更重審受影響範圍，審查者曾參與製作時更換。只有門下認可真正獨立且共同前提已齊的部分可先放行；其餘不執行。每項審查最多三輪，第三輪仍退回回報必要決策，不強制通過。
-3. **派工與執行**：交 `shangshu` 產生結構化派工表：每單位的 Task、前置 Task、讀寫範圍、成果與驗收。依 [相依派工工具](scheduling.md) 建立原生 Task；用 dispatch-ready 同時啟動已放行、Orca 已就緒且不衝突的工作。同角色可有多個獨立執行者，不等同批無關工作全部完成。
-4. **增量彙整與驗收**：收到部分成果就用 continue 交回原尚書核對與彙整。已完成、可獨立驗收的單位交未參與製作的刑部先驗；共同整合須等相關成果齊備。修正交還原執行者，原審查者核對差異；重大變更重新檢查受影響範圍。增量結論是暫定，不能代替最終整合驗收；最多三輪仍不通過回報問題。
-5. **整合與回報**：全部必要單位與共同整合通過後，由原尚書彙整，主對話交付具體結果、證據與未完成事項。門下完成審查的 worker_done succeeded 不代表方案通過；Orca Task ready 也不等同放行。主對話不得代替門下決定通過，不將部分完成宣稱整體完成。
+1. root 建立需求項目及三省平行頭領：無 work 的 `team ensure zhongshu`、`team ensure menxia`、`team ensure shangshu`。中書 scope 為 `*`；門下與尚書先為空 scope，只等待合法業務，不審查、不派實作。
+2. 中書拆分真正獨立項目，必要時 `delegate zhongshu` 交舍人調查。中書頭領以 `work plan` 保存方案，然後 `team ensure menxia --work` 授予既有門下該項目，`team send` 送審。重複 ensure 不另開同一角色頭領，grant 也不自動喚醒。
+3. 門下頭領依原始需求、方案、證據及驗收，以 `review record` 保存 plan-approval；給事中可分工審查，但不能代替頭領的正式放行。退回交中書修正；三輪仍未通過回報具體缺口，不強制批准。
+4. 核可後由中書或門下 `team ensure shangshu --work` 授予既有尚書工作，再 `team send`。尚書建立相關六部頭領，各部頭領自行 `delegate` 本部 executor。無關工作可先進行；共同介面與真正前置未齊者等待，不重建 Task 取代等待。
+5. implementation executor 提交實際成果；刑部獨立驗收，尚書核對必要整合與需求覆蓋。`sync` 確認原生實作已成功結束、成果到齊，再由門下保存 closure-confirmation。只有門下合法確認才為 Done；結案後以 kind=report 向既有頭領傳送完成結果，尚書交中書核對，root 據此回報使用者。
 
-## 實際派工
+root 建立三省是控制啟動，不代替送審或核可。三省的原生 creator 都是 root，避免「中書 → 尚書 → 部 → 郎中」多增加一層；尚書管理部尚書，部尚書管理郎中，仍需原生深度 3。由使用者在 Settings → Orchestration → Nested worker depth 確認，不自行改設定。
 
-以工具的結構化檔案寫入方式把自含任務存成 UTF-8 檔案；內容含原始需求、允許修改範圍、前置成果位置、驗收方式。不要把含反引號或 `$()` 的內容直接拼進 shell。使用 ASCII 角色 ID：
+## 分工與交接
 
-```sh
-edict dispatch zhongshu --session <本對話ID> --spec-file /tmp/edict-plan.txt --run <run-id> --worktree current
-```
+同一工作項目的每份 plan、review、帶 work 的 ensure／delegate／team send 都明確帶目前 `generation`。新增項目從 1 開始；取消後明確重做才產生新代，不把 revision 當 generation。`work result` 以原 operation ID 綁定其世代，JSON 可附 generation 供交付說明，但不能用它改變原委派。
 
-CLI 從目前對話的角色設定取得代理／模型，經 stdin 交給 Orca；成功收據的 Run／Task／Dispatch ID 另存此對話狀態。派工時沿用目前工作目錄，明確指定 --worktree。不要用專案目錄或終端機作為對話身分。
+六部跨部門問題交尚書轉送，不能直接命令其他部門。執行代理只向自己的頭領回報／提問，不再開下層。正式訊息用 `team send <目標memberId>`；目標原生身分已 settled 且回應 owner-required 時，原對話用 `team forward <messageId>` 原樣代送，不重寫決策。完整規則見 [執行與恢復](scheduling.md)。
 
-- 一般派工預設 `current`，包括唯讀與讀寫範圍不衝突的實作，代理留在協調者目前工作樹內。只有需要隔離平行編輯時才用 `--worktree new-child --name edict-bingbu`，建立目前工作樹底下的子工作樹；同專案省略 --repo，名稱可省略由 Orca 決定。`new-top-level` 僅用於使用者明確要求獨立工作樹的工作，不作為一般實作或平行派工的預設。不支援 new-child 時回報限制，不自動改用 new-top-level。完整選擇與跨主機限制見 [相依派工工具](scheduling.md)。不要自行 git checkout 建立 worker 工作樹。
-- 檔案位置以執行者收據中的工作樹為準。新工作樹不含未 commit 的變更；先確認基準包含待審內容，或給審查者完整實際檔案路徑。整合變更依專案規則，不擅自 commit、merge、push 或發布。
-- 保留收據，依收據 `next` 指示處理。啟動本階段所有獨立 worker 後**結束本輪**，讓 Orca 在回報時喚醒你。這是等待方式，不代表任務完成；不能為了「持續工作」輪詢、sleep 或開另一輪重複派工。
-- 喚醒可能延後送達。依本機 Orca 1.4.246 的檢視紀錄，兩種暫緩條件為：最後一次人工操作輸入後 10 分鐘內，且 Orca 判定輸入列仍有內容；或 Claude 的狀態為 waiting／blocked、該狀態收到後 10 分鐘內，且畫面有選單或確認提示（讀不到畫面時也可能成立）。後者不等同一般閒置等待下一則訊息。暫緩期間每 2 秒重查；另有 TUI 送達條件，其整體等待上限未查證，不能保證 10 分鐘內送達。一次紀錄在最後輸入後 10 分 2 秒解除，但使用者表示輸入框為空，輸入列判定原因仍未查證。Run 尚有未完成派工而收到使用者訊息時，由協調者本輪單次執行 `<入口> orchestration check --run <run-id>`，讀取最舊一批未讀郵件並處理；一次不保證取完全部郵件，依收據處理後續。不得改成輪詢、背景消費信箱或因喚醒延後重複派工。
-- 喚醒後執行 Orca 提供的 `check` 指令，只處理本 Run 的事件。有明確答案的 worker 問題以 `reply` 回覆；需使用者決定才向使用者問一個具體問題。接著推進下一個可執行階段，不停在方案通過就宣稱完成。
-- 同任務追問、修正與增量成果優先用 `edict continue <dispatch-id> --spec-file <UTF8檔案> --session <本對話ID>` 交回原角色；CLI 保留原 Run 並索引 send 收據與新 Dispatch。不要為同一輪的每份成果重開完整角色。直接使用原生 send 的收據不會自動進入 Edict 索引，須保存原始收據；是否重新開啟以 Orca 回應為準。continue 不傳新的模型參數；需要更換模型或角色時另建明確的新任務。
-- 啟動失敗或結果未知時，保留原始輸出並讀 `<入口> skills get orchestration --reference references/recovery-and-cleanup.md`；不直接重試、不因沉默推定停止。取消也依該指南處理，不直接關閉終端機。
+team send 的 JSON 預設 kind=handoff，代表受控制及授權限制的業務交接。完成或停止結果用 `{"generation":1,"kind":"report","body":"W-001 已完成門下結案，成果與驗收摘要見目前 work show。"}`。report 只許頭領間沿既有合法路由及共同 scope 回報，仍核對身分與世代；可在 Done、pause、cancel 或 off 後保存及轉達唯讀結果，但不授權實作、不改核可、不送 executor，也不藉通知要求對方恢復派工。
+
+方案修改會更換摘要並使舊核可失效；成果或證據檔案改變會使相關驗收失效。只重審受影響部分，不能沿用作者自述的通過。頭領核對覆蓋、介面、風險及缺口，不要求每位頭領重做全部實作或測試。
+
+## 事件、進度與收尾
+
+啟動本階段所有有權且不衝突的工作後結束當輪，讓 Orca 在回報時喚醒。結束當輪不等於整體工作完成。依原生前言處理 ask／reply／worker_done；子工作仍在執行時，頭領不得以 worker_done 宣告整項交付完成。
+
+收到原生事件或使用者詢問進度時，單次 `sync --run` 核對原生執行、停止要求與工作視圖；需要原生郵件時按本機指南處理，不能輪詢、sleep 或開常駐消費程序。喚醒延後或暫時無輸出不證明代理停止。
+
+保留成果原文、原生收據及待決問題。讀 `work show` 取得項目的狀態、generation、plan／result digest、members、operations、decisions 及 messages；不要只看 session 的舊索引。狀態為 Review 不代表核可，原生成功也不代表 Done。
+
+使用者可明確要求暫停、恢復或取消。root 執行相應 `control`；off 禁止新派工及業務推進，但已有委派可完成並保存回報。控制回覆仍可能有在途請求，列出未知與仍執行的工作，不宣稱程序全部凍結。取消與重做詳見 scheduling.md。
+
+不自行 commit、merge、push、發布、部署或傳送外部內容；這些沿用使用者與專案的明確授權。輸出證據先清除 token、密碼及金鑰。缺少資訊先在可讀範圍查證；會改變需求取捨或授權的事項由頭領升級原對話詢問。
+
+## 執行範圍
+
+v2 工作政策已有模擬測試，但完整多層原生流程、各供應商、控制交錯與壓縮恢復未全測。doctor 不提供這些認證；缺能力時如實回報，不能把設計文件中的目標功能當作現行介面。舊 v1 資料與免核可派工入口不支援，保留原資料，使用新狀態驗證。

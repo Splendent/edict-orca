@@ -31,7 +31,7 @@ export function readSession(id) {
   const file = sessionFile(id);
   if (!fs.existsSync(file)) return null;
   const state = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (state.version !== 1 || state.session !== id || typeof state.active !== 'boolean') throw new Error(`對話狀態格式不正確：${file}`);
+  if (state.version !== 2 || state.session !== id || typeof state.active !== 'boolean') throw new Error(`對話狀態格式不正確或不是新版 v2：${file}`);
   validateConfig(state.config);
   return state;
 }
@@ -105,7 +105,7 @@ export function activate(id, config, project, options = {}) {
   const coordinator = options.coordinator || previous?.coordinator || (id.startsWith('cursor:') ? 'cursor' : null);
   const modeConfirmed = coordinator === 'cursor' && (options.modeConfirmed === true || (previous?.active === true && previous.modeConfirmed === true));
   const active = coordinator !== 'cursor' || modeConfirmed;
-  const state = { version: 1, session: id, active, coordinator, modeConfirmed,
+  const state = { version: 2, session: id, active, coordinator, modeConfirmed,
     pending: active ? null : 'cursor-custom-mode', project: path.resolve(project), config,
     revision: previous?.revision ?? 0, runId: previous?.runId ?? null, dispatches: previous?.dispatches ?? [],
     tasks: previous?.tasks ?? [], continuations: previous?.continuations ?? [], initializedAt: previous?.initializedAt ?? new Date().toISOString() };
@@ -139,7 +139,8 @@ export function recordDispatch(id, receipt, role, run, details = {}) {
   const result = receipt.result ?? receipt;
   if (!receipt.ok || !validId(result.dispatchId) || !validId(result.taskId)) throw new Error('派工收據缺少有效的 Task／Dispatch ID，結果未確認，不得重複派工');
   if (run && result.runId && result.runId!==run) throw new Error('派工收據的 Run 與請求不符，結果未確認，不得重複派工');
-  const state = requireActive(id);
+  const state = readSession(id);
+  if (!state) throw new Error('對話資料不存在，保留原生收據');
   const runId = result.runId ?? run;
   if (!validId(runId)) throw new Error('派工收據缺少 Run 綁定，結果未確認，不得重複派工');
   if (runId) state.runId = runId;
@@ -153,7 +154,8 @@ export function recordTask(id, receipt, role, run) {
   const taskId=result.taskId || result.task?.id || result.id;
   if (!receipt.ok || !validId(taskId)||!validId(result.runId||run)) throw new Error('Task 收據缺少有效 ID／Run，請保存原始收據，不得重複建立');
   if (result.runId&&result.runId!==run) throw new Error('Task 收據的 Run 不符，請保存原始收據，不得重複建立');
-  const state=requireActive(id);
+  const state=readSession(id);
+  if (!state) throw new Error('對話資料不存在，保留原生收據');
   state.tasks ??= [];
   if (!state.tasks.some(row=>row.taskId===taskId)) state.tasks.push({taskId,role,runId:result.runId || run});
   writeSession(state);
@@ -167,7 +169,8 @@ export function recordContinuation(id, receipt, original) {
   if (hasDispatch&&(!validId(result.dispatchId)||!validId(result.taskId))) throw new Error('續辦收據的 Task／Dispatch ID 必須同時為有效字串，不得重送');
   if (!validId(result.messageId)&&!hasDispatch) throw new Error('續辦收據缺少有效 message 或 Task／Dispatch ID，不得重送');
   if (present('runId')&&(!validId(result.runId)||result.runId!==original.runId)) throw new Error('續辦收據的 Run 與原 Dispatch 不符，不得重送');
-  const state=requireActive(id);
+  const state=readSession(id);
+  if (!state) throw new Error('對話資料不存在，保留原生收據');
   state.continuations ??= [];
   state.continuations.push({ targetDispatchId:original.dispatchId, role:original.role, runId:original.runId,
     messageId:result.messageId ?? null, dispatchId:result.dispatchId ?? null, taskId:result.taskId ?? null, delivery:result.delivery ?? null });

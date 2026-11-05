@@ -28,11 +28,13 @@ test('two conversations in the same project remain isolated and project stays un
   const initialized = cli(project, ['init', '--yes', '--session', 'codex:A', '--agent', 'cursor', '--model', 'selected-model']);
   assert.equal(initialized.status, 0, initialized.stderr);
   assert.equal(readSession('codex:A').active, true);
+  assert.equal(readSession('codex:A').version, 2);
+  assert.equal(readSession('codex:A').config.version, 2);
   assert.equal(readSession('codex:B'), null);
   assert.deepEqual(fs.readdirSync(project), ['AGENTS.md']);
   assert.equal(context('codex:B'), '');
   assert.match(context('codex:A'), /selected-model/);
-  assert.equal(cli(project, ['dispatch', 'bingbu', '--session', 'codex:B', '--spec-file', '-', '--dry-run'], {}, 'Task').status, 1);
+  assert.equal(cli(project, ['run', 'open', '--session', 'codex:B', '--objective', 'Must remain inactive']).status, 1);
 });
 test('native session IDs, not project or terminal, define scope', () => {
   assert.equal(sessionId(undefined, { CODEX_THREAD_ID: 'native' }), 'codex:native');
@@ -71,7 +73,7 @@ test('repeat init and off preserve run and settings; config affects only its con
   assert.equal(readSession('codex:A').dispatches.length, 1);
   assert.equal(cli(project, ['config', 'set', 'menxia', '--session', 'codex:A', '--clear-model']).status, 0);
   assert.equal(readSession('codex:A').active, false);
-  assert.equal(cli(project, ['dispatch', 'bingbu', '--session', 'codex:A', '--spec-file', '-', '--dry-run'], {}, 'Task').status, 1);
+  assert.equal(cli(project, ['run', 'open', '--session', 'codex:A', '--objective', 'Must remain off']).status, 1);
 });
 test('invalid config edits leave persisted state intact', t => {
   const { project } = fixture(t);
@@ -84,6 +86,27 @@ test('invalid config edits leave persisted state intact', t => {
   assert.equal(cli(project, ['config','set','menxia','--session','codex:A','--agent','cursor']).status, 0);
   assert.deepEqual(readSession('codex:A').config.roles.menxia, { agent:'cursor', model:null, effort:null });
 });
+test('v2 position configuration is isolated, replaces provider settings and can restore inheritance',t=>{
+  const {project}=fixture(t);
+  activate('codex:A',defaults('claude','original','high'),project);
+  activate('codex:B',defaults('codex','other-model'),project);
+  const result=cli(project,['config','set','bingbu','--session','codex:A','--position','executor','--agent','cursor']);
+  assert.equal(result.status,0,result.stderr);
+  let config=readSession('codex:A').config;
+  assert.deepEqual(config.positionOverrides.bingbu.executor,{agent:'cursor',model:null,effort:null});
+  assert.deepEqual(config.roles.bingbu,{agent:'claude',model:'original',effort:'high'});
+  assert.equal(config.positionOverrides.bingbu.head,undefined);
+  assert.deepEqual(readSession('codex:B').config.positionOverrides,{});
+  assert.equal(cli(project,['config','set','bingbu','--session','codex:A','--agent','codex','--model','next-model']).status,0);
+  assert.deepEqual(readSession('codex:A').config.positionOverrides.bingbu.executor,{agent:'cursor',model:null,effort:null});
+  assert.equal(cli(project,['config','set','bingbu','--session','codex:A','--position','executor','--inherit']).status,0);
+  config=readSession('codex:A').config;
+  assert.equal(config.positionOverrides.bingbu.executor,undefined);
+  assert.deepEqual(config.roles.bingbu,{agent:'codex',model:'next-model',effort:null});
+  const before=readSession('codex:A');
+  assert.equal(cli(project,['config','set','bingbu','--session','codex:A','--position','root','--agent','claude']).status,1);
+  assert.deepEqual(readSession('codex:A'),before);
+});
 test('Cursor coordinator remains pending until mode confirmation and off clears confirmation', t => {
   const { project } = fixture(t);
   let result = cli(project, ['init','--yes','--session','cursor:A','--coordinator','cursor']);
@@ -91,7 +114,7 @@ test('Cursor coordinator remains pending until mode confirmation and off clears 
   assert.equal(readSession('cursor:A').active,false);
   assert.equal(readSession('cursor:A').pending,'cursor-custom-mode');
   assert.equal(context('cursor:A'),'');
-  assert.equal(cli(project,['dispatch','bingbu','--session','cursor:A','--spec-file','-','--dry-run'],{},'Task').status,1);
+  assert.equal(cli(project,['run','open','--session','cursor:A','--objective','Must remain pending']).status,1);
   result=cli(project,['init','--yes','--session','cursor:A','--coordinator','cursor','--mode-confirmed']);
   assert.equal(result.status,0,result.stderr);
   assert.equal(readSession('cursor:A').active,true);
@@ -131,7 +154,7 @@ test('dead-owner lock permits off, config and repeated init to recover', t => {
   assert.equal(readSession('codex:A').active,true);
   assert.equal(readSession('codex:A').config.roles.menxia.model,'review-model');
 });
-test('legacy empty and malformed old locks recover without resetting state', t => {
+test('abandoned empty and malformed locks recover without resetting v2 state', t => {
   const { project } = fixture(t);
   activate('codex:A', defaults('claude'),project);
   const lock=sessionFile('codex:A')+'.lock';
@@ -177,9 +200,9 @@ test('a contended lock that is released during the bounded wait allows writing',
   await closed;
   assert.equal(readSession('codex:A').active,false);
 });
-test('legacy configuration is imported explicitly and the source is unchanged', t => {
+test('complete v2 configuration is imported explicitly and the source is unchanged', t => {
   const { dir, project } = fixture(t);
-  const file = path.join(dir, 'legacy.json'); const original = JSON.stringify(defaults('cursor', 'chosen'));
+  const file = path.join(dir, 'settings-v2.json'); const original = JSON.stringify(defaults('cursor', 'chosen'));
   fs.writeFileSync(file, original);
   const result = cli(project, ['init','--yes','--session','cursor:imported','--import-config',file]);
   assert.equal(result.status, 0, result.stderr);
@@ -192,6 +215,17 @@ test('legacy configuration is imported explicitly and the source is unchanged', 
   assert.match(repeated.stderr,/僅限對話首次 init 前/);
   assert.match(repeated.stderr,/edict config set/);
   assert.deepEqual(readSession('cursor:imported'),before);
+});
+test('v1 configuration and session input are rejected without migration or overwrite',t=>{
+  const {dir,project}=fixture(t),file=path.join(dir,'unsupported-v1.json');
+  const config={...defaults(),version:1},raw=JSON.stringify(config);fs.writeFileSync(file,raw);
+  const imported=cli(project,['init','--yes','--session','codex:unsupported','--import-config',file]);
+  assert.equal(imported.status,1);assert.match(imported.stderr,/必須為 2/);
+  assert.equal(readSession('codex:unsupported'),null);assert.equal(fs.readFileSync(file,'utf8'),raw);
+  const state=activate('codex:unsupported',defaults(),project),sessionPath=sessionFile(state.session);
+  const unsupported=JSON.stringify({...state,version:1});fs.writeFileSync(sessionPath,unsupported);
+  assert.equal(cli(project,['off','--session',state.session]).status,1);
+  assert.equal(fs.readFileSync(sessionPath,'utf8'),unsupported);
 });
 test('noninteractive init without --yes stops before activation', t => {
   const { project } = fixture(t);
