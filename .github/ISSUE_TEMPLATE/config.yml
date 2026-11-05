@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安裝與故障排除
+    url: https://github.com/Splendent/edict-orca/blob/main/docs/troubleshooting.md
+    about: 查閱常見訊息、身分、派工與更新問題
+  - name: 安全漏洞回報方式
+    url: https://github.com/Splendent/edict-orca/blob/main/SECURITY.md
+    about: 請勿在公開議題揭露漏洞利用細節或敏感資料
