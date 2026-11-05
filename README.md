@@ -35,7 +35,7 @@
 1. 取得已發布版本並檢查來源。
 
    ```sh
-   git clone --branch v0.4.0-beta.2 https://github.com/Splendent/edict-orca.git
+   git clone --branch v0.4.0-beta.4 https://github.com/Splendent/edict-orca.git
    cd edict-orca
    node scripts/install-local.mjs --dry-run
    ```
@@ -47,7 +47,7 @@
    node bin/edict.mjs --version
    ```
 
-   預期版本為 `edict-orca 0.4.0-beta.2`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
+   預期版本為 `edict-orca 0.4.0-beta.4`。保留此目錄，技能連結會指向它。此步驟不啟用任何對話。
 
 3. 在 Orca 的 **Settings → Orchestration → Nested worker depth** 設定至少 `3`。
 4. 在要工作的對話執行 `/edict init`；Codex 執行 `$edict init`。依提示選擇代理與模型，完成後查詢 `/edict status` 或 `$edict status`。
