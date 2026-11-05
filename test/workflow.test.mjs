@@ -286,6 +286,34 @@ test('owner forwarding settles the original request and preserves the replacemen
   assert.equal(run.operations[started.operation.id].supersededBy, forwarded.id);
 });
 
+test('a peer send refused as not-a-helper of a settled dispatch becomes owner-required and rebinds on forward', t => {
+  const f = fixture(t), started = f.launch();
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  const refusal = { ok: false, error: { code: 'task_not_found', message: `Dispatch ${started.member.dispatchId} is not a helper of Dispatch peer, so only the coordinator or the worker that started it can give it more work. No effects were applied.`, data: { effectsApplied: false } } };
+  f.runtime.send = () => { const error = new Error('refused'); error.code = 'task_not_found'; error.receipt = refusal; throw error; };
+  const first = f.w.message('run-test', started.member.id, 'W-001', 'Repair', undefined, 1);
+  assert.equal(first.state, 'owner-required');
+  assert.equal(f.w.run('run-test').operations[first.messageId].rawReceipt.error.code, 'task_not_found');
+  f.runtime.send = () => ({ dispatchId: 'owner-new', taskId: 'owner-task', runId: 'run-test' });
+  f.root(); const forwarded = f.w.forward('run-test', first.messageId);
+  assert.equal(forwarded.state, 'delivered');
+  const run = f.w.run('run-test'), member = run.members[started.member.id];
+  assert.equal(member.dispatchId, 'owner-new');
+  assert.ok(member.dispatches.includes('owner-new'));
+  assert.equal(run.operations[first.messageId].state, 'forwarded');
+});
+
+test('a plain task_not_found without the helper refusal stays unknown', t => {
+  const f = fixture(t), started = f.launch();
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.send = () => { const error = new Error('missing'); error.code = 'task_not_found'; error.receipt = { ok: false, error: { code: 'task_not_found', message: 'Task missing', data: { effectsApplied: false } } }; throw error; };
+  assert.throws(() => f.w.message('run-test', started.member.id, 'W-001', 'Repair', undefined, 1), /missing/);
+  const op = Object.values(f.w.run('run-test').operations).findLast(x => x.operationKind === 'continuation');
+  assert.equal(op.state, 'unknown');
+});
+
 test('a proven no-effect refusal can be explicitly replaced but unknown work cannot', t => {
   const f = fixture(t), start=f.runtime.start.bind(f.runtime);
   f.runtime.start = () => { const error = new Error('native refused without effects'); error.receipt={ok:false,error:{data:{effectsApplied:false}}}; throw error; };
