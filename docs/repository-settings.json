@@ -1,0 +1,30 @@
+{
+  "repository": {
+    "description": "三省六部多代理協作，供 Orca 對話使用；各省部頭領管理執行代理，分別規劃、審查、派工與驗收。",
+    "homepage": "https://github.com/Splendent/edict-orca#readme",
+    "has_issues": true,
+    "has_wiki": false,
+    "has_discussions": false,
+    "allow_merge_commit": true,
+    "allow_squash_merge": false,
+    "allow_rebase_merge": false
+  },
+  "topics": [
+    "ai-agents",
+    "multi-agent",
+    "orchestration",
+    "workflow-automation",
+    "orca",
+    "codex",
+    "claude-code",
+    "cursor",
+    "cli"
+  ],
+  "security": {
+    "private_vulnerability_reporting": true,
+    "vulnerability_alerts": true,
+    "automated_security_fixes": true,
+    "secret_scanning": true,
+    "secret_scanning_push_protection": true
+  }
+}

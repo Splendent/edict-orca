@@ -1,0 +1,17 @@
+name: 使用問題
+description: 安裝、聊天啟用、角色設定或流程使用問題
+labels: [question]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 想完成的工作
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 版本與目前操作
+      description: 附 edict-orca、Orca、作業系統與代理版本，並列出已閱讀的文件及嘗試步驟；不貼憑證或私人對話。
+    validations:
+      required: true
