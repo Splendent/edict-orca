@@ -151,6 +151,8 @@ function controlAllowed(run, item, active = true) {
 }
 function roleIs(actor, ...roles) { if (!roles.includes(actor.role)) fail(`此操作不屬於 ${actor.role} 的職權`); }
 function isHead(actor) { if (actor.position !== 'head' && actor.position !== 'coordinator') fail('執行代理沒有派工權'); }
+// Planning-only work: the requirement authorizes no writes and nothing was delivered, so the approved plan is the result.
+function designOnly(item) { return !item.writes.length && !item.result; }
 function approval(run, item) {
   const decision = run.decisions.findLast(x => x.kind === 'plan-approval' && x.work === item.id && x.generation === item.generation && x.digest === item.plan?.digest);
   return decision?.verdict === 'approved' && validEvidence(decision.evidence) ? decision : null;
@@ -307,9 +309,15 @@ export class Workflow {
         if (!deliveryComplete(run, item)) fail('必要實作委派失敗、未交付或未確認成功，不能驗收');
       } else if (kind === 'closure-confirmation') {
         roleIs(actor, 'menxia'); isHead(actor);
-        if (!item.result || data.digest !== item.result.digest || !validEvidence(item.result.files) || !approval(run, item) || !deliveryComplete(run, item)) fail('缺少有效方案、完整交付或成果');
-        const accepted = run.decisions.findLast(x => x.kind === 'artifact-acceptance' && x.work === work && x.generation === item.generation && x.digest === item.result.digest);
-        if (!accepted || accepted.verdict !== 'approved' || !validEvidence(accepted.evidence) || outstanding(run, item).some(x => x.writes.length || x.position === 'executor')) fail('獨立驗收或在途工作尚未收斂');
+        if (designOnly(item)) {
+          // A design-only item (no writes, nothing delivered) closes on its approved plan: the plan is the deliverable.
+          if (!item.plan || data.digest !== item.plan.digest || !approval(run, item) || item.plan.author === actor.id) fail('設計型工作缺少已核可的方案或摘要不符');
+          if (outstanding(run, item).some(x => x.writes.length || x.position === 'executor')) fail('在途工作尚未收斂');
+        } else {
+          if (!item.result || data.digest !== item.result.digest || !validEvidence(item.result.files) || !approval(run, item) || !deliveryComplete(run, item)) fail('缺少有效方案、完整交付或成果');
+          const accepted = run.decisions.findLast(x => x.kind === 'artifact-acceptance' && x.work === work && x.generation === item.generation && x.digest === item.result.digest);
+          if (!accepted || accepted.verdict !== 'approved' || !validEvidence(accepted.evidence) || outstanding(run, item).some(x => x.writes.length || x.position === 'executor')) fail('獨立驗收或在途工作尚未收斂');
+        }
         if (data.verdict === 'approved') item.done = true;
       } else fail('未知審查種類');
       const record = { id: randomUUID(), kind, work, generation: item.generation, digest: data.digest, verdict: data.verdict, actor: actor.id, evidence: proof, reason: data.reason || '', at: new Date().toISOString() };

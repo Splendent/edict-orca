@@ -203,6 +203,8 @@ edict review record --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W
 edict work show --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
 ```
 
+設計型工作（需求 writes 為空、沒有任何 implementation 交付）以方案本體為交付物：門下核可方案後，closure-confirmation 的 digest 填目前方案 digest，不需 work result 與刑部 artifact-acceptance；仍須沒有在途 executor。只要需求授權了寫入，就必須有成果與刑部驗收。
+
 核對 W-001 為 Done 才回報該項完成。原生 completed、給事中通過文字、最後一位郎中的成功回報或尚書單方面同意均不足以結案。退回只修具體缺口；方案變更須重審，成果變更須重新驗收，不保留舊摘要的有效性。
 
 ## 結案後的唯讀通知
