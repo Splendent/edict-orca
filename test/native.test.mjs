@@ -30,6 +30,20 @@ test('native calls request full records only for orchestration commands', t => {
   assert.deepEqual(native.call(['terminal', 'show']).argv, ['terminal', 'show', '--json']);
   assert.deepEqual(native.call(['worktree', 'show']).argv, ['worktree', 'show', '--json']);
 });
+test('an unverified start that still returns the Task/Dispatch pair is kept as a receipt', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-native-unverified-'));
+  const command = path.join(dir, 'orca-fixture');
+  fs.writeFileSync(command, '#!/usr/bin/env node
+console.log(JSON.stringify({ok:true,result:{runId:"run-example",taskId:"task-x",dispatchId:"ctx-x",state:"outcome_unknown",stage:"turn_start_unobserved"}}));process.exit(1);
+', { mode: 0o755 });
+  const previous = process.env.ORCA_CLI_COMMAND; process.env.ORCA_CLI_COMMAND = command;
+  t.after(() => { if (previous === undefined) delete process.env.ORCA_CLI_COMMAND; else process.env.ORCA_CLI_COMMAND = previous; fs.rmSync(dir, { recursive: true, force: true }); });
+  const native = new NativeRuntime();
+  const receipt = native.start(runId, { agent: 'codex' }, 'spec', { title: 't' }, 'req-1');
+  assert.equal(receipt.dispatchId, 'ctx-x'); assert.equal(receipt.taskId, 'task-x'); assert.equal(receipt.startUnverified, true);
+  assert.throws(() => native.call(['orchestration', 'worker-show']), /失敗或未確認/);
+});
+
 function worker(id, state = 'succeeded') {
   return { dispatchId: id, taskId: `task-${id}`, runId, workerState: state,
     dispatchStatus: state === 'succeeded' ? 'completed' : 'dispatched',

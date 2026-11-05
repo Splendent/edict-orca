@@ -93,7 +93,15 @@ export class NativeRuntime {
     if (options.parent) args.push('--parent', options.parent);
     if (options.deps?.length) args.push('--deps', JSON.stringify(options.deps));
     if (options.name) args.push('--name', options.name);
-    return this.call(args, spec);
+    try { return this.call(args, spec); }
+    catch (error) {
+      // Orca exits non-zero for an unverified start (input accepted, turn start unobserved) while still
+      // returning ok:true with the Task/Dispatch pair. That pair is a real receipt: keep it so the member
+      // binds and the worker's own Edict calls resolve; the unobserved start stays recorded on the receipt.
+      const result = error.receipt?.ok === true ? error.receipt.result : null;
+      if (result && validId(result.dispatchId) && validId(result.taskId) && result.runId === runId) return { ...result, startUnverified: true };
+      throw error;
+    }
   }
   rename(runId, dispatchId, title) {
     const detail = this.call(['orchestration', 'worker-show', '--dispatch', dispatchId]);
