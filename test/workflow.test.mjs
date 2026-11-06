@@ -208,6 +208,34 @@ test('same-file claims conflict; distinct readonly verification waits for writer
   assert.equal(f.runtime.calls.length, calls);
 });
 
+test('overlap rejection names the in-flight work, operation and conflicting dimension', t => {
+  const f = fixture(t), first = f.launch('W-001', { reads: ['src'], writes: ['src/a.txt'] });
+  const error = (() => { try { f.launch('W-001', { reads: ['src/a.txt'], writes: ['src/a.txt'] }); } catch (e) { return e; } })();
+  assert.match(error.message, /^與在途工作的檔案或工具範圍衝突：/);
+  assert.match(error.message, new RegExp(`W-001 bingbu/executor 操作 ${first.operation.id}`));
+  assert.match(error.message, /寫入\/寫入：本次寫入 src\/a\.txt，在途寫入 src\/a\.txt/);
+  assert.match(error.message, /讀取\/寫入：本次讀取 src\/a\.txt，在途寫入 src\/a\.txt/);
+  assert.doesNotMatch(error.message, /routes|tail|\d+:\d+/);
+  assert.doesNotMatch(error.message, /保守視為重疊/);
+});
+
+test('shared tool resources are named; distinct resources and disjoint paths run in parallel', t => {
+  const f = fixture(t);
+  f.root(); f.w.add('run-test', { id: 'W-002', title: 'VFX', requirement: 'Implement VFX', reads: ['src/vfx'], writes: ['src/vfx'], resources: ['vite-5216'], acceptance: ['Check'] });
+  f.w.add('run-test', { id: 'W-003', title: 'Growth', requirement: 'Implement growth', reads: ['src/growth'], writes: ['src/growth'], resources: ['vite-5216', 'vite-5217'], acceptance: ['Check'] });
+  f.as(f.zhongshu);
+  for (const [id, resources] of [['W-002', ['vite-5216']], ['W-003', ['vite-5216', 'vite-5217']]]) {
+    const proposal = f.w.plan('run-test', id, { generation: 1, description: id, reads: [`src/${id === 'W-002' ? 'vfx' : 'growth'}`], writes: [`src/${id === 'W-002' ? 'vfx' : 'growth'}`], resources });
+    f.w.launch('run-test', 'menxia', 'head', id, { spec: 'Review', generation: 1 });
+    f.as(f.menxia); f.approve(proposal.digest, id); f.as(f.zhongshu);
+    f.w.launch('run-test', 'shangshu', 'head', id, { spec: 'Coordinate', generation: 1 });
+    f.as(f.shangshu); f.w.launch('run-test', 'bingbu', 'head', id, { spec: 'Implement', generation: 1 }); f.as(f.zhongshu);
+  }
+  f.as(f.bingbu); const vfx = f.launch('W-002');
+  assert.throws(() => f.launch('W-003'), new RegExp(`W-002 bingbu/executor 操作 ${vfx.operation.id}（共用工具資源 vite-5216）`));
+  assert.equal(f.launch('W-003', { resources: ['vite-5217'] }).confirmed, true);
+});
+
 test('unknown native start is durable, keeps its slot and is never automatically retried', t => {
   const f = fixture(t); const calls = f.runtime.calls.length;
   f.runtime.start = () => { f.runtime.calls.push('unknown'); throw new Error('response lost'); };
