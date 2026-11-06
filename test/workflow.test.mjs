@@ -261,7 +261,8 @@ test('root amends requirement resources, clearing plan approval and recording hi
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' }), /只有原對話/);
   f.root();
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 2, resources: ['vite-5217'], reason: 'port' }), /工作世代不符/);
-  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], writes: ['src'], reason: 'port' }), /只接受 generation、resources、reason/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], acceptance: ['x'], reason: 'port' }), /只接受 generation、resources、reads、extraReads、reason/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, reason: 'nothing' }), /至少須提供 resources、reads 或 extraReads/);
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'] }), /缺少 reason/);
   const result = f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'vite-5216 is used by W-002' });
   const run = f.w.run('run-test'), item = run.items['W-001'];
@@ -270,7 +271,7 @@ test('root amends requirement resources, clearing plan approval and recording hi
   assert.equal(item.generation, 1);
   assert.deepEqual(run.history.at(-1), { ...result.amendment });
   assert.equal(run.history.at(-1).action, 'amend');
-  assert.deepEqual(run.history.at(-1).from, []);
+  assert.deepEqual(run.history.at(-1).changes, { resources: { from: [], to: ['vite-5217'] } });
   assert.equal(run.history.at(-1).clearedPlan.digest, f.proposal.digest);
   f.as(f.bingbu);
   assert.throws(() => f.launch(), /必須有中書送審方案/);
@@ -342,6 +343,31 @@ function otherRoot(f) {
   return other;
 }
 
+test('amend widens reads and extraReads but never narrows them or changes writes', t => {
+  const f = fixture(t), other = otherRoot(f);
+  f.root();
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, reads: ['src/a'], reason: 'narrow' }), /reads 只能擴大/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, writes: ['src', 'api'], reason: 'more writes' }), /writes 不能修訂/);
+  const widened = f.w.amend('run-test', 'W-001', { generation: 1, reads: ['src', 'api', 'vite.config.ts'], extraReads: [{ root: other, reads: ['src'] }], reason: 'needs api and the other worktree' });
+  const item = f.w.run('run-test').items['W-001'];
+  assert.deepEqual(item.reads, ['src', 'api', 'vite.config.ts']);
+  assert.deepEqual(item.writes, ['src']);
+  assert.equal(item.extraReads[0].root, fs.realpathSync.native(other));
+  assert.equal(item.plan, null);
+  assert.deepEqual(Object.keys(widened.amendment.changes), ['reads', 'extraReads']);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [], reason: 'narrow' }), /extraReads 只能擴大/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [{ root: other, reads: ['src/a'] }], reason: 'narrow' }), /extraReads 只能擴大/);
+  f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [{ root: other, reads: ['src', 'public'] }], reason: 'wider' });
+  f.as(f.zhongshu);
+  assert.throws(() => f.w.plan('run-test', 'W-001', { generation: 1, description: 'too wide', reads: ['src'], writes: ['src'], extraReads: [{ root: f.dir, reads: ['src'] }] }), /方案超出需求授權範圍/);
+  const plan = f.w.plan('run-test', 'W-001', { generation: 1, description: 'cross root', reads: ['src'], writes: ['src'], extraReads: [{ root: other, reads: ['src'] }] });
+  assert.deepEqual(plan.extraReads[0].reads, ['src']);
+  f.as(f.menxia); f.approve(plan.digest);
+  f.as(f.bingbu);
+  assert.throws(() => f.launch('W-001', { extraReads: [{ root: other, reads: ['public'] }] }), /委派超出已核可範圍/);
+  assert.equal(f.launch('W-001', { reads: ['src'], writes: ['src/a.txt'] }).operation.extraReads[0].reads[0], 'src');
+});
+
 test('extraReads accept only existing absolute directories with contained relative reads', t => {
   const f = fixture(t), other = otherRoot(f);
   f.root();
@@ -368,6 +394,7 @@ test('UNC and drive-letter spellings of one extraReads root are the same root', 
   f.root();
   const merged = f.w.add('run-test', { id: 'W-003', title: 'x', requirement: 'x', reads: ['src'], writes: [], extraReads: [{ root: other, reads: ['src'] }, { root: unc, reads: ['public'] }], acceptance: ['Check'] });
   assert.deepEqual(merged.extraReads, [{ root: other, reads: ['src', 'public'] }]);
+  f.w.amend('run-test', 'W-003', { generation: 1, extraReads: [{ root: unc, reads: ['src', 'public', 'docs'] }], reason: 'share spelling' });
 });
 
 test('a cross-root read conflicts with a writer in that root and passes disjoint ranges', t => {

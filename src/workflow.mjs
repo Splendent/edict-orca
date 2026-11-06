@@ -330,28 +330,41 @@ export class Workflow {
       run.items[id] = item; return item;
     });
   }
-  // Root-only requirement amendment of an item's tool resources. Any current plan is cleared because a plan's
-  // resources must stay within the requirement; Zhongshu resubmits and Menxia re-reviews before new delegation.
+  // Root-only requirement amendment: replace resources and/or widen reads and extraReads; writes never change. Any
+  // current plan is cleared (and the revision bumped) so Zhongshu resubmits and Menxia re-reviews before delegation.
   amend(runId, work, data) {
     return this.mutate(runId, (run, actor, db) => {
-      if (actor.id !== 'root') fail('只有原對話（原協調者）可以修訂需求資源');
-      if (!data || typeof data !== 'object' || Array.isArray(data)) fail('需求修訂輸入必須是 JSON 物件，含 generation、resources、reason');
-      const extra = Object.keys(data).filter(key => !['generation', 'resources', 'reason'].includes(key));
-      if (extra.length) fail(`需求修訂只接受 generation、resources、reason；不接受 ${extra.join(', ')}`);
+      if (actor.id !== 'root') fail('只有原對話（原協調者）可以修訂需求');
+      if (!data || typeof data !== 'object' || Array.isArray(data)) fail('需求修訂輸入必須是 JSON 物件，含 generation、reason 及 resources、reads 或 extraReads');
+      if (Object.hasOwn(data, 'writes')) fail('需求的 writes 不能修訂；需要新的寫入範圍時請建立新工作項目');
+      const fields = ['resources', 'reads', 'extraReads'];
+      const extra = Object.keys(data).filter(key => !['generation', 'reason', ...fields].includes(key));
+      if (extra.length) fail(`需求修訂只接受 generation、resources、reads、extraReads、reason；不接受 ${extra.join(', ')}`);
+      if (!fields.some(key => data[key] !== undefined)) fail('需求修訂至少須提供 resources、reads 或 extraReads');
       const item = itemFor(run, work);
-      if (item.done || item.cancelled || run.cancelled || run.enabled === false) fail('工作已結案、取消或停用；需求資源修訂沒有套用');
+      if (item.done || item.cancelled || run.cancelled || run.enabled === false) fail('工作已結案、取消或停用；需求修訂沒有套用');
       generationFor(item, data.generation);
-      const resources = resourceList(data.resources, 'resources'), reason = text(data.reason, 'reason');
-      if (outstanding(run, item).some(x => x.position === 'executor')) fail('本世代仍有在途或未確認的執行代理操作；先 sync 或等其收斂再修訂資源');
+      const reason = text(data.reason, 'reason'), next = {};
+      if (data.resources !== undefined) next.resources = resourceList(data.resources, 'resources');
+      if (data.reads !== undefined) {
+        next.reads = safeRanges(data.reads, 'reads');
+        if (!subset(item.reads, next.reads)) fail('reads 只能擴大：新的 reads 必須涵蓋目前所有 reads，不能縮小');
+      }
+      if (data.extraReads !== undefined) {
+        next.extraReads = extraReadList(data.extraReads);
+        if (!extraSubset(item.extraReads || [], next.extraReads)) fail('extraReads 只能擴大：新的清單必須涵蓋目前每個根目錄及其 reads，不能縮小');
+      }
+      if (outstanding(run, item).some(x => x.position === 'executor')) fail('本世代仍有在途或未確認的執行代理操作；先 sync 或等其收斂再修訂需求');
       // Clearing the plan would orphan a delivered result (closure only counts the new revision), so refuse instead.
-      if (item.result || Object.values(run.operations).some(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && x.result)) fail('本世代已有交付成果；修訂資源會使已完成成果失效。請以 control cancel／restart 重新授權，或建立新工作項目');
-      const previous = item.resources, clearedPlan = item.plan ? { revision: item.plan.revision, digest: item.plan.digest } : null;
-      item.resources = resources;
+      if (item.result || Object.values(run.operations).some(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && x.result)) fail('本世代已有交付成果；修訂需求會使已完成成果失效。請以 control cancel／restart 重新授權，或建立新工作項目');
+      const changes = Object.fromEntries(Object.entries(next).map(([key, value]) => [key, { from: item[key] || [], to: value }]));
+      const clearedPlan = item.plan ? { revision: item.plan.revision, digest: item.plan.digest } : null;
+      Object.assign(item, next);
       // Bump the revision with the cleared plan so stale same-revision executors take the archived-only result path.
       if (item.plan) { item.plan = null; item.result = null; item.revision++; }
-      const record = { action: 'amend', work, generation: item.generation, field: 'resources', from: previous, to: resources, reason, clearedPlan, sequence: ++db.sequence, actor: actor.id, at: new Date().toISOString() };
+      const record = { action: 'amend', work, generation: item.generation, changes, reason, clearedPlan, sequence: ++db.sequence, actor: actor.id, at: new Date().toISOString() };
       run.history.push(record);
-      return { item, amendment: record, next: clearedPlan ? '方案與核可已清除；中書須以新資源重新提交方案並由門下重新審查' : '中書提交方案時可宣告新資源' };
+      return { item, amendment: record, next: clearedPlan ? '方案與核可已清除；中書須依修訂後的需求重新提交方案並由門下重新審查' : '中書提交方案時可宣告修訂後的範圍' };
     });
   }
   plan(runId, work, data) {
