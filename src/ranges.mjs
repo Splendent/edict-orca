@@ -61,6 +61,10 @@ export function geometry(root,names) {
   }
   return result;
 }
+// Combines per-root geometries into one claim; physical identities keep roots comparable.
+export function mergeGeometry(...parts) {
+  return {ranges:parts.flatMap(x=>x.ranges),unknown:parts.some(x=>x.unknown)};
+}
 function prefix(a,b) { return a.length<=b.length&&a.every((x,i)=>x===b[i]); }
 export function rangeOverlap(a,b) {
   if (!a.ranges.length&&!a.unknown||!b.ranges.length&&!b.unknown) return false;
@@ -68,6 +72,9 @@ export function rangeOverlap(a,b) {
   return a.ranges.some(left=>b.ranges.some(right=>left.some(x=>right.some(y=>x.id===y.id&&(prefix(x.tail,y.tail)||prefix(y.tail,x.tail))))));
 }
 // Names each overlapping read/write dimension using the declared project-relative ranges, never the physical geometry.
+const rootName=root=>String(root).replaceAll('\\','/').replace(/\/$/,'');
+// Declared reads plus cross-root reads shown as <absolute root>/<range>.
+const declaredReads=x=>[...(x.reads||[]),...(x.extraReads||[]).flatMap(e=>e.reads.map(r=>`${rootName(e.root)}/${r}`))];
 export function overlapDetails(candidate,other,label='在途') {
   const show=names=>names?.length?names.join(', '):'（未宣告）';
   const rows=[];let conservative=false;
@@ -78,7 +85,7 @@ export function overlapDetails(candidate,other,label='在途') {
     if (a?.unknown||b?.unknown) conservative=true;
   };
   check(candidate.physicalWrites,other.physicalWrites,`寫入/寫入：本次寫入 ${show(candidate.writes)}，${label}寫入 ${show(other.writes)}`);
-  check(candidate.physicalWrites,other.physicalReads,`寫入/讀取：本次寫入 ${show(candidate.writes)}，${label}讀取 ${show(other.reads)}`);
-  check(candidate.physicalReads,other.physicalWrites,`讀取/寫入：本次讀取 ${show(candidate.reads)}，${label}寫入 ${show(other.writes)}`);
+  check(candidate.physicalWrites,other.physicalReads,`寫入/讀取：本次寫入 ${show(candidate.writes)}，${label}讀取 ${show(declaredReads(other))}`);
+  check(candidate.physicalReads,other.physicalWrites,`讀取/寫入：本次讀取 ${show(declaredReads(candidate))}，${label}寫入 ${show(other.writes)}`);
   return conservative?[...rows,'實體範圍未確認（* 或工作樹位置未知），保守視為重疊']:rows;
 }

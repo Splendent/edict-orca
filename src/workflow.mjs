@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { home, readSession, requireActive, atomicJSON, writeSession } from './session.mjs';
 import { ROLES, workerSpec } from './roles.mjs';
 import { resolveSettings } from './config.mjs';
-import { geometry, overlapDetails } from './ranges.mjs';
+import { geometry, mergeGeometry, overlapDetails } from './ranges.mjs';
 import { NativeRuntime } from './native.mjs';
 
 const departments = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
@@ -64,7 +64,8 @@ const safeRanges = (values, label) => list(values, label).map(value => {
   return normalized.replace(/\/$/, '');
 });
 
-// Validates directory roots named by built-in resource conventions.
+// Extra read roots: [{ root: <existing absolute directory>, reads: [<root-relative ranges>] }]. Roots are stored by
+// their real path so subset checks compare one spelling; claims use physical identities from geometry().
 function realDirectory(value, label) {
   // On Windows a leading single slash is drive-relative, not absolute; require a drive or UNC root there.
   if (typeof value !== 'string' || !value.trim() || !path.isAbsolute(value) || process.platform === 'win32' && /^[\\/](?![\\/])/.test(value)) fail(`${label} 必須是既有目錄的絕對路徑`);
@@ -73,6 +74,31 @@ function realDirectory(value, label) {
   if (!fs.statSync(real).isDirectory()) fail(`${label} 不是目錄：${value}`);
   return real;
 }
+function extraReadList(values, label = 'extraReads') {
+  if (values === undefined) return [];
+  if (!Array.isArray(values)) fail(`${label} 必須是 {root, reads} 物件陣列`);
+  const merged = [];
+  for (const entry of values) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).some(key => !['root', 'reads'].includes(key))) fail(`${label} 每項只接受 root 與 reads`);
+    const root = realDirectory(entry.root, `${label}.root`), reads = safeRanges(entry.reads, `${label}.reads`);
+    if (!reads.length) fail(`${label}.reads 不可為空`);
+    const existing = merged.find(x => sameDirectory(x.root, root));
+    if (existing) existing.reads = [...new Set([...existing.reads, ...reads])]; else merged.push({ root, reads });
+  }
+  return merged;
+}
+// A UNC share and a drive path can name one directory (e.g. \\localhost\C$\x and C:\x); realpath keeps both
+// spellings and a share cannot be mapped back to a drive safely, so roots compare by physical directory identity.
+function directoryIdentity(dir) {
+  try { const stat = fs.statSync(dir, { bigint: true }); return stat.isDirectory() ? `${stat.dev}:${stat.ino}` : null; } catch { return null; }
+}
+function sameDirectory(a, b) {
+  if (a === b) return true;
+  const left = directoryIdentity(a);
+  return left !== null && left === directoryIdentity(b);
+}
+const extraSubset = (a, b) => a.every(x => b.some(y => sameDirectory(x.root, y.root) && subset(x.reads, y.reads)));
+const extraGeometry = extras => mergeGeometry(...extras.map(x => geometry(x.root, x.reads)));
 // Built-in convention: git:<common dir> names the shared git metadata a commit or merge writes. It is canonicalised to
 // the real common dir so every spelling of one repository yields the same exclusive resource name.
 function resourceList(values, label) {
@@ -298,7 +324,7 @@ export class Workflow {
       const id = data.id || `W-${String(Object.keys(run.items).length + 1).padStart(3, '0')}`;
       if (run.items[id]) fail('工作項目已存在，不重建');
       const item = { id, title: text(data.title, 'title'), requirement: text(data.requirement, 'requirement'), generation: 1, revision: 0,
-        reads: safeRanges(data.reads || ['*'], 'reads'), writes: safeRanges(data.writes || [], 'writes'), resources: resourceList(data.resources || [], 'resources'),
+        reads: safeRanges(data.reads || ['*'], 'reads'), extraReads: extraReadList(data.extraReads), writes: safeRanges(data.writes || [], 'writes'), resources: resourceList(data.resources || [], 'resources'),
         acceptance: list(data.acceptance, 'acceptance'), paused: false, cancelled: false, done: false, plan: null, result: null, authors: [] };
       if (!item.acceptance.length) fail('工作必須有驗收條件');
       run.items[id] = item; return item;
@@ -332,9 +358,10 @@ export class Workflow {
     return this.mutate(runId, (run, actor) => {
       roleIs(actor, 'zhongshu'); isHead(actor); const item = itemFor(run, work); controlAllowed(run, item);
       generationFor(item, data.generation);
-      const plan = { description: text(data.description, 'description'), reads: safeRanges(data.reads || item.reads, 'reads'), writes: safeRanges(data.writes || [], 'writes'),
+      const plan = { description: text(data.description, 'description'), reads: safeRanges(data.reads || item.reads, 'reads'),
+        extraReads: data.extraReads === undefined ? item.extraReads || [] : extraReadList(data.extraReads), writes: safeRanges(data.writes || [], 'writes'),
         resources: resourceList(data.resources || [], 'resources'), acceptance: list(data.acceptance || item.acceptance, 'acceptance'), dependencies: list(data.dependencies || [], 'dependencies'), author: actor.id };
-      if (!subset(plan.reads, item.reads) || !subset(plan.writes, item.writes) || !resourceSubset(plan.resources, item.resources)) fail('方案超出需求授權範圍');
+      if (!subset(plan.reads, item.reads) || !extraSubset(plan.extraReads, item.extraReads || []) || !subset(plan.writes, item.writes) || !resourceSubset(plan.resources, item.resources)) fail('方案超出需求授權範圍');
       for (const dep of plan.dependencies) if (!run.items[dep] || dep === item.id) fail('工作相依無效');
       const visiting = new Set(), visited = new Set();
       function visit(id) {
@@ -405,22 +432,24 @@ export class Workflow {
       if (position === 'executor' && !phases.includes(phase)) fail('執行階段不屬於此角色');
       const writes = position === 'head' || verification || role === 'zhongshu' || role === 'shangshu' ? [] : safeRanges(data.writes || item.plan.writes, 'writes');
       const reads = position === 'head' ? [] : safeRanges(data.reads || item?.plan?.reads || item?.reads || ['*'], 'reads');
+      const extraReads = position === 'head' ? [] : data.extraReads === undefined ? item?.plan?.extraReads || item?.extraReads || [] : extraReadList(data.extraReads);
       const resources = position === 'head' ? [] : resourceList(data.resources || item?.plan?.resources || [], 'resources');
-      if (item && (!subset(writes, item.plan?.writes || item.writes) || !subset(reads, item.plan?.reads || item.reads) || !resourceSubset(resources, item.plan?.resources || item.resources))) fail('委派超出已核可範圍');
+      if (!item && extraReads.length) fail('extraReads 只能用於已授權的工作項目');
+      if (item && (!subset(writes, item.plan?.writes || item.writes) || !subset(reads, item.plan?.reads || item.reads) || !extraSubset(extraReads, item.plan?.extraReads || item.extraReads || []) || !resourceSubset(resources, item.plan?.resources || item.resources))) fail('委派超出已核可範圍');
       const replaces = data.replaces ? run.operations[data.replaces] : null;
-      if (data.replaces && (!replaces || replaces.state !== 'refused' || replaces.rawReceipt?.error?.data?.effectsApplied !== false || replaces.actorId !== actor.id || replaces.work !== work || replaces.generation !== item?.generation || replaces.revision !== item?.revision || replaces.role !== role || replaces.position !== position || replaces.phase !== phase || !subset(replaces.writes, writes) || !subset(writes, replaces.writes) || !subset(replaces.reads, reads) || !subset(reads, replaces.reads) || !subset(replaces.resources, resources) || !subset(resources, replaces.resources))) fail('只能明確取代自己同階段、同範圍、同世代且原生已證明無副作用的拒絕操作');
+      if (data.replaces && (!replaces || replaces.state !== 'refused' || replaces.rawReceipt?.error?.data?.effectsApplied !== false || replaces.actorId !== actor.id || replaces.work !== work || replaces.generation !== item?.generation || replaces.revision !== item?.revision || replaces.role !== role || replaces.position !== position || replaces.phase !== phase || !subset(replaces.writes, writes) || !subset(writes, replaces.writes) || !subset(replaces.reads, reads) || !subset(reads, replaces.reads) || !subset(replaces.resources, resources) || !subset(resources, replaces.resources) || JSON.stringify(replaces.extraReads || []) !== JSON.stringify(extraReads))) fail('只能明確取代自己同階段、同範圍、同世代且原生已證明無副作用的拒絕操作');
       const deps = item?.plan?.dependencies || [];
       if (deps.some(id => !run.items[id].done)) fail('前置工作尚未結案；未送出原生派工');
       const worktree = data.worktree || 'current';
       if (!['current', 'new-child'].includes(worktree) && !worktree.startsWith('path:')) fail('工作樹必須為 current、new-child 或既有 path');
       const root = worktree === 'current' ? run.project : worktree.startsWith('path:') ? worktree.slice(5) : null;
-      const shape = { physicalReads: geometry(root, reads), physicalWrites: geometry(root, writes) };
-      claim(db, { runId, position, reads, writes, resources, ...shape });
+      const shape = { physicalReads: mergeGeometry(geometry(root, reads), extraGeometry(extraReads)), physicalWrites: geometry(root, writes) };
+      claim(db, { runId, position, reads, extraReads, writes, resources, ...shape });
       const member = { id: randomUUID(), role, position, title: position === 'head' ? ROLES[role].head : ROLES[role].executor,
         supervisor: actor.id, scopes: role === 'zhongshu' && position === 'head' ? ['*'] : work ? [work] : [], dispatches: [], dispatchId: null, generation: 1 };
       const session = requireActive(this.session), settings = resolveSettings(session.config, role, position);
       const op = { id: randomUUID(), requestId: randomUUID(), memberId: member.id, actorId: actor.id, role, position, runId, work: work || null, generation: item?.generation || 0,
-        revision: item?.revision || 0, writes, reads, resources, worktree, root, ...shape, settings, state: 'submitted', sequence: ++db.sequence,
+        revision: item?.revision || 0, writes, reads, extraReads, resources, worktree, root, ...shape, settings, state: 'submitted', sequence: ++db.sequence,
         spec: text(data.spec, 'spec'), title: data.title === undefined ? null : displayText(text(data.title, 'title')),
         phase, operationKind: 'start', replaces: replaces?.id || null, planDigest: item?.plan?.digest || null, controlRevision: run.controlRevision };
       run.members[member.id] = member; run.operations[op.id] = op;
@@ -469,7 +498,7 @@ export class Workflow {
     }
     const result = transaction(db => {
       const run = getRun(db, this.session, runId), op = run.operations[operationId];
-      if (op && root) { op.root = root; op.physicalReads = geometry(root, op.reads); op.physicalWrites = geometry(root, op.writes); }
+      if (op && root) { op.root = root; op.physicalReads = mergeGeometry(geometry(root, op.reads), extraGeometry(op.extraReads || [])); op.physicalWrites = geometry(root, op.writes); }
       if (op && rootError) op.rootError = rootError;
       return finalizeReceipt(run, operationId, receipt);
     });
@@ -565,14 +594,14 @@ export class Workflow {
       if (target.position === 'executor' && (previous.work !== work || previous.generation !== item.generation || previous.revision !== item.revision)) fail('續辦不能跨工作、世代或已變更方案；須建立新的明確委派');
       if (target.position === 'executor' && previous.state !== 'settled') fail('實作代理仍在執行；先處理其原生回報並 sync，再續辦有界修正');
       if (Object.values(run.operations).some(x => x.memberId === target.id && ['unknown', 'submitted'].includes(x.state))) fail('目標仍有未確認操作，不能再次傳送');
-      const claims = target.position === 'executor' ? previous : { reads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
+      const claims = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
       claim(db, { ...claims, runId, position: target.position }, target.id);
       const record = { id: randomUUID(), requestId: randomUUID(), kind, from: source.id, to: targetId, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0, body: text(body, 'body'), forwardOf: forwardId || null, state: 'submitted', sequence: ++db.sequence };
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
         role: target.role, position: target.position, actorId: actor.id, runId, requestId: record.requestId,
         settings: previous.settings, phase: previous.phase, spec: record.body, title: previous.title, worktree: previous.worktree, root: previous.root,
-        reads: claims.reads, writes: claims.writes, resources: claims.resources, physicalReads: claims.physicalReads, physicalWrites: claims.physicalWrites,
+        reads: claims.reads, extraReads: claims.extraReads || [], writes: claims.writes, resources: claims.resources, physicalReads: claims.physicalReads, physicalWrites: claims.physicalWrites,
         planDigest: item?.plan?.digest || null, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0,
         state: 'submitted', sequence: record.sequence, result: null, receipt: null };
       if (item && target.position === 'executor') item.result = null;

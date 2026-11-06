@@ -342,6 +342,46 @@ function otherRoot(f) {
   return other;
 }
 
+test('extraReads accept only existing absolute directories with contained relative reads', t => {
+  const f = fixture(t), other = otherRoot(f);
+  f.root();
+  const add = extraReads => f.w.add('run-test', { id: `W-${Math.random()}`, title: 'x', requirement: 'x', reads: ['src'], writes: [], extraReads, acceptance: ['Check'] });
+  assert.throws(() => add([{ root: 'other-worktree', reads: ['src'] }]), /必須是既有目錄的絕對路徑/);
+  assert.throws(() => add([{ root: path.join(f.dir, 'missing'), reads: ['src'] }]), /不存在/);
+  assert.throws(() => add([{ root: path.join(f.proof), reads: ['src'] }]), /不是目錄/);
+  for (const escape of ['../project/src', '/etc', 'C:/x', 'src/*'])
+    assert.throws(() => add([{ root: other, reads: [escape] }]), /工作範圍只接受專案相對路徑或單獨的 \*/);
+  assert.throws(() => add([{ root: other, reads: [] }]), /不可為空/);
+  assert.throws(() => add([{ root: other, reads: ['src'], writes: ['src'] }]), /只接受 root 與 reads/);
+  assert.throws(() => add({ root: other, reads: ['src'] }), /物件陣列/);
+  const item = add([{ root: other + path.sep, reads: ['src'] }, { root: other, reads: ['public'] }]);
+  assert.deepEqual(item.extraReads, [{ root: fs.realpathSync.native(other), reads: ['src', 'public'] }]);
+});
+
+test('UNC and drive-letter spellings of one extraReads root are the same root', t => {
+  const f = fixture(t), other = fs.realpathSync.native(otherRoot(f));
+  const drive = /^([A-Za-z]):\\(.*)$/.exec(other);
+  const unc = drive && `\\\\localhost\\${drive[1]}$\\${drive[2]}`;
+  if (process.platform !== 'win32' || !unc || !fs.existsSync(unc)) return t.skip('administrative share \\\\localhost\\<drive>$ unavailable');
+  approvedItem(f, 'W-002', { reads: ['src'], writes: [], extraReads: [{ root: other, reads: ['src', 'public'] }] }, { reads: ['src'], writes: [], extraReads: [{ root: unc, reads: ['src'] }] });
+  assert.equal(f.w.launch('run-test', 'bingbu', 'executor', 'W-002', { spec: 'Read via share', generation: 1, extraReads: [{ root: unc, reads: ['src'] }] }).confirmed, true);
+  f.root();
+  const merged = f.w.add('run-test', { id: 'W-003', title: 'x', requirement: 'x', reads: ['src'], writes: [], extraReads: [{ root: other, reads: ['src'] }, { root: unc, reads: ['public'] }], acceptance: ['Check'] });
+  assert.deepEqual(merged.extraReads, [{ root: other, reads: ['src', 'public'] }]);
+});
+
+test('a cross-root read conflicts with a writer in that root and passes disjoint ranges', t => {
+  const f = fixture(t), other = otherRoot(f);
+  approvedItem(f, 'W-002', { reads: ['src'], writes: ['src'] });
+  const writer = f.launch('W-002', { reads: [], writes: ['src'], worktree: `path:${other}` });
+  approvedItem(f, 'W-003', { reads: ['src/docs'], writes: [], extraReads: [{ root: other, reads: ['src', 'public'] }] });
+  const error = (() => { try { f.w.launch('run-test', 'bingbu', 'executor', 'W-003', { spec: 'Read the other worktree', generation: 1, extraReads: [{ root: other, reads: ['src'] }] }); } catch (e) { return e; } })();
+  assert.match(error.message, new RegExp(`W-002 bingbu/executor 操作 ${writer.operation.id}`));
+  assert.match(error.message, /讀取\/寫入：本次讀取 src\/docs, .*other-worktree\/src，在途寫入 src/);
+  const reader = f.w.launch('run-test', 'bingbu', 'executor', 'W-003', { spec: 'Read public only', generation: 1, extraReads: [{ root: other, reads: ['public'] }] });
+  assert.equal(reader.confirmed, true);
+});
+
 test('git metadata resources are canonicalised so one common dir is exclusive', t => {
   const f = fixture(t), common = path.join(f.dir, 'repo.git');
   fs.mkdirSync(path.join(common, 'worktrees', 'urchin'), { recursive: true });
