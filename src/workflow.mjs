@@ -64,6 +64,27 @@ const safeRanges = (values, label) => list(values, label).map(value => {
   return normalized.replace(/\/$/, '');
 });
 
+// Validates directory roots named by built-in resource conventions.
+function realDirectory(value, label) {
+  // On Windows a leading single slash is drive-relative, not absolute; require a drive or UNC root there.
+  if (typeof value !== 'string' || !value.trim() || !path.isAbsolute(value) || process.platform === 'win32' && /^[\\/](?![\\/])/.test(value)) fail(`${label} 必須是既有目錄的絕對路徑`);
+  let real;
+  try { real = fs.realpathSync.native(path.resolve(value)); } catch { fail(`${label} 不存在：${value}`); }
+  if (!fs.statSync(real).isDirectory()) fail(`${label} 不是目錄：${value}`);
+  return real;
+}
+// Built-in convention: git:<common dir> names the shared git metadata a commit or merge writes. It is canonicalised to
+// the real common dir so every spelling of one repository yields the same exclusive resource name.
+function resourceList(values, label) {
+  return [...new Set(list(values, label).map(name => {
+    if (!name.startsWith('git:')) return name;
+    const dir = realDirectory(name.slice(4), 'git: 資源');
+    if (!fs.existsSync(path.join(dir, 'HEAD'))) fail(`git: 資源必須指向 git common dir（git rev-parse --git-common-dir 的結果）：${name}`);
+    if (fs.existsSync(path.join(dir, 'commondir'))) fail(`git: 資源指向單一工作樹的 git dir；請改用 git rev-parse --git-common-dir 的結果：${name}`);
+    return `git:${dir.replaceAll('\\', '/')}`;
+  }))];
+}
+
 function readDb() {
   const file = path.join(home(), 'workflow.json');
   const db = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { version: 2, sequence: 0, runs: {}, intents: {} };
@@ -277,7 +298,7 @@ export class Workflow {
       const id = data.id || `W-${String(Object.keys(run.items).length + 1).padStart(3, '0')}`;
       if (run.items[id]) fail('工作項目已存在，不重建');
       const item = { id, title: text(data.title, 'title'), requirement: text(data.requirement, 'requirement'), generation: 1, revision: 0,
-        reads: safeRanges(data.reads || ['*'], 'reads'), writes: safeRanges(data.writes || [], 'writes'), resources: list(data.resources || [], 'resources'),
+        reads: safeRanges(data.reads || ['*'], 'reads'), writes: safeRanges(data.writes || [], 'writes'), resources: resourceList(data.resources || [], 'resources'),
         acceptance: list(data.acceptance, 'acceptance'), paused: false, cancelled: false, done: false, plan: null, result: null, authors: [] };
       if (!item.acceptance.length) fail('工作必須有驗收條件');
       run.items[id] = item; return item;
@@ -294,7 +315,7 @@ export class Workflow {
       const item = itemFor(run, work);
       if (item.done || item.cancelled || run.cancelled || run.enabled === false) fail('工作已結案、取消或停用；需求資源修訂沒有套用');
       generationFor(item, data.generation);
-      const resources = list(data.resources, 'resources'), reason = text(data.reason, 'reason');
+      const resources = resourceList(data.resources, 'resources'), reason = text(data.reason, 'reason');
       if (outstanding(run, item).some(x => x.position === 'executor')) fail('本世代仍有在途或未確認的執行代理操作；先 sync 或等其收斂再修訂資源');
       // Clearing the plan would orphan a delivered result (closure only counts the new revision), so refuse instead.
       if (item.result || Object.values(run.operations).some(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && x.result)) fail('本世代已有交付成果；修訂資源會使已完成成果失效。請以 control cancel／restart 重新授權，或建立新工作項目');
@@ -312,7 +333,7 @@ export class Workflow {
       roleIs(actor, 'zhongshu'); isHead(actor); const item = itemFor(run, work); controlAllowed(run, item);
       generationFor(item, data.generation);
       const plan = { description: text(data.description, 'description'), reads: safeRanges(data.reads || item.reads, 'reads'), writes: safeRanges(data.writes || [], 'writes'),
-        resources: list(data.resources || [], 'resources'), acceptance: list(data.acceptance || item.acceptance, 'acceptance'), dependencies: list(data.dependencies || [], 'dependencies'), author: actor.id };
+        resources: resourceList(data.resources || [], 'resources'), acceptance: list(data.acceptance || item.acceptance, 'acceptance'), dependencies: list(data.dependencies || [], 'dependencies'), author: actor.id };
       if (!subset(plan.reads, item.reads) || !subset(plan.writes, item.writes) || !resourceSubset(plan.resources, item.resources)) fail('方案超出需求授權範圍');
       for (const dep of plan.dependencies) if (!run.items[dep] || dep === item.id) fail('工作相依無效');
       const visiting = new Set(), visited = new Set();
@@ -384,7 +405,7 @@ export class Workflow {
       if (position === 'executor' && !phases.includes(phase)) fail('執行階段不屬於此角色');
       const writes = position === 'head' || verification || role === 'zhongshu' || role === 'shangshu' ? [] : safeRanges(data.writes || item.plan.writes, 'writes');
       const reads = position === 'head' ? [] : safeRanges(data.reads || item?.plan?.reads || item?.reads || ['*'], 'reads');
-      const resources = position === 'head' ? [] : list(data.resources || item?.plan?.resources || [], 'resources');
+      const resources = position === 'head' ? [] : resourceList(data.resources || item?.plan?.resources || [], 'resources');
       if (item && (!subset(writes, item.plan?.writes || item.writes) || !subset(reads, item.plan?.reads || item.reads) || !resourceSubset(resources, item.plan?.resources || item.resources))) fail('委派超出已核可範圍');
       const replaces = data.replaces ? run.operations[data.replaces] : null;
       if (data.replaces && (!replaces || replaces.state !== 'refused' || replaces.rawReceipt?.error?.data?.effectsApplied !== false || replaces.actorId !== actor.id || replaces.work !== work || replaces.generation !== item?.generation || replaces.revision !== item?.revision || replaces.role !== role || replaces.position !== position || replaces.phase !== phase || !subset(replaces.writes, writes) || !subset(writes, replaces.writes) || !subset(replaces.reads, reads) || !subset(reads, replaces.reads) || !subset(replaces.resources, resources) || !subset(resources, replaces.resources))) fail('只能明確取代自己同階段、同範圍、同世代且原生已證明無副作用的拒絕操作');

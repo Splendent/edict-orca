@@ -324,6 +324,44 @@ test('amend bumps the revision so a settled stale executor result is archived on
   assert.equal(f.w.run('run-test').items['W-001'].result, null);
 });
 
+// Adds an approved item with a bingbu head so executors can be delegated for it.
+function approvedItem(f, id, requirement, plan = requirement) {
+  f.root(); f.w.add('run-test', { id, title: id, requirement: id, acceptance: ['Check'], ...requirement });
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', id, { generation: 1, description: id, ...plan });
+  f.w.launch('run-test', 'menxia', 'head', id, { spec: 'Review', generation: 1 });
+  f.as(f.menxia); f.approve(proposal.digest, id); f.as(f.zhongshu);
+  f.w.launch('run-test', 'shangshu', 'head', id, { spec: 'Coordinate', generation: 1 });
+  f.as(f.shangshu); f.w.launch('run-test', 'bingbu', 'head', id, { spec: 'Implement', generation: 1 });
+  f.as(f.bingbu);
+  return proposal;
+}
+function otherRoot(f) {
+  const other = path.join(f.dir, 'other-worktree');
+  fs.mkdirSync(path.join(other, 'src'), { recursive: true }); fs.mkdirSync(path.join(other, 'public'), { recursive: true });
+  return other;
+}
+
+test('git metadata resources are canonicalised so one common dir is exclusive', t => {
+  const f = fixture(t), common = path.join(f.dir, 'repo.git');
+  fs.mkdirSync(path.join(common, 'worktrees', 'urchin'), { recursive: true });
+  fs.writeFileSync(path.join(common, 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(common, 'worktrees', 'urchin', 'HEAD'), 'ref: refs/heads/x\n');
+  fs.writeFileSync(path.join(common, 'worktrees', 'urchin', 'commondir'), '../..\n');
+  f.root();
+  const add = resources => f.w.add('run-test', { id: `W-${Math.random()}`, title: 'x', requirement: 'x', reads: ['src'], writes: [], resources, acceptance: ['Check'] });
+  assert.throws(() => add(['git:relative/.git']), /必須是既有目錄的絕對路徑/);
+  assert.throws(() => add([`git:${path.join(f.dir, 'missing.git')}`]), /不存在/);
+  assert.throws(() => add([`git:${f.project}`]), /git common dir/);
+  assert.throws(() => add([`git:${path.join(common, 'worktrees', 'urchin')}`]), /單一工作樹的 git dir/);
+  const canonical = `git:${fs.realpathSync.native(common).replaceAll('\\', '/')}`;
+  assert.deepEqual(add([`git:${common}${path.sep}`, 'vite-5216']).resources, [canonical, 'vite-5216']);
+  approvedItem(f, 'W-002', { reads: ['src/a'], writes: ['src/a'], resources: [`git:${common}`] });
+  const commit = f.launch('W-002');
+  approvedItem(f, 'W-003', { reads: ['src/b'], writes: ['src/b'], resources: [`git:${common.replaceAll('\\', '/')}/`] });
+  assert.throws(() => f.launch('W-003'), new RegExp(`操作 ${commit.operation.id}（共用工具資源 git:`));
+});
+
 test('amend is refused while an executor of the generation is outstanding and after closure', t => {
   const f = fixture(t); f.launch();
   f.root();
