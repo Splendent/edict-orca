@@ -236,6 +236,111 @@ test('shared tool resources are named; distinct resources and disjoint paths run
   assert.equal(f.launch('W-003', { resources: ['vite-5217'] }).confirmed, true);
 });
 
+test('a wildcard tool resource and unknown ranges are named as such', t => {
+  const f = fixture(t);
+  f.root(); f.w.add('run-test', { id: 'W-002', title: 'Ports', requirement: 'Use every port', reads: ['src/a'], writes: ['src/a'], resources: ['*'], acceptance: ['Check'] });
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', 'W-002', { generation: 1, description: 'all ports', reads: ['src/a'], writes: ['src/a'], resources: ['*'] });
+  f.w.launch('run-test', 'menxia', 'head', 'W-002', { spec: 'Review', generation: 1 });
+  f.as(f.menxia); f.approve(proposal.digest, 'W-002'); f.as(f.zhongshu);
+  f.w.launch('run-test', 'shangshu', 'head', 'W-002', { spec: 'Coordinate', generation: 1 });
+  f.as(f.shangshu); f.w.launch('run-test', 'bingbu', 'head', 'W-002', { spec: 'Implement', generation: 1 });
+  f.as(f.bingbu); f.launch('W-002', { resources: ['*'] });
+  f.root(); f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' });
+  f.as(f.zhongshu);
+  const next = f.w.plan('run-test', 'W-001', { generation: 1, description: 'b', reads: ['src/b'], writes: ['src/b'], resources: ['vite-5217'] });
+  f.as(f.menxia); f.approve(next.digest);
+  f.as(f.bingbu);
+  assert.throws(() => f.launch('W-001', { reads: ['src/b'], writes: ['src/b'], resources: ['vite-5217'] }), /在途操作宣告資源 \*，與所有工具資源互斥（本次資源 vite-5217）/);
+  assert.throws(() => f.launch('W-001', { reads: ['src/b'], writes: ['src/b'], resources: [], worktree: 'new-child' }), /寫入\/寫入：本次寫入 src\/b，在途寫入 src\/a.*實體範圍未確認/);
+});
+
+test('root amends requirement resources, clearing plan approval and recording history', t => {
+  const f = fixture(t);
+  f.as(f.zhongshu);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' }), /只有原對話/);
+  f.root();
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 2, resources: ['vite-5217'], reason: 'port' }), /工作世代不符/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], writes: ['src'], reason: 'port' }), /只接受 generation、resources、reason/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'] }), /缺少 reason/);
+  const result = f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'vite-5216 is used by W-002' });
+  const run = f.w.run('run-test'), item = run.items['W-001'];
+  assert.deepEqual(item.resources, ['vite-5217']);
+  assert.equal(item.plan, null);
+  assert.equal(item.generation, 1);
+  assert.deepEqual(run.history.at(-1), { ...result.amendment });
+  assert.equal(run.history.at(-1).action, 'amend');
+  assert.deepEqual(run.history.at(-1).from, []);
+  assert.equal(run.history.at(-1).clearedPlan.digest, f.proposal.digest);
+  f.as(f.bingbu);
+  assert.throws(() => f.launch(), /必須有中書送審方案/);
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', 'W-001', { generation: 1, description: 'New port', reads: ['src'], writes: ['src'], resources: ['vite-5217'] });
+  f.as(f.bingbu); assert.throws(() => f.launch(), /缺少門下對目前方案的正式核可/);
+  f.as(f.menxia); f.approve(proposal.digest);
+  f.as(f.bingbu); assert.equal(f.launch().operation.resources[0], 'vite-5217');
+});
+
+test('amend refuses a generation that already has a delivered result', t => {
+  const f = fixture(t), started = f.launch('W-001', { reads: [], writes: ['src/a.txt'] });
+  const file = path.join(f.project, 'src/a.txt'); fs.writeFileSync(file, 'A delivered');
+  f.as(started.member); f.w.result('run-test', started.operation.id, { files: [file] });
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test');
+  assert.equal(f.w.run('run-test').operations[started.operation.id].state, 'settled');
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' }), /已有交付成果.*control cancel／restart.*新工作項目/);
+  assert.ok(f.w.run('run-test').items['W-001'].result);
+  assert.ok(f.w.run('run-test').items['W-001'].plan);
+});
+
+test('a result from an earlier revision of the generation does not block amend', t => {
+  const f = fixture(t), started = f.launch('W-001', { reads: [], writes: ['src/a.txt'] });
+  const file = path.join(f.project, 'src/a.txt'); fs.writeFileSync(file, 'A delivered');
+  f.as(started.member); f.w.result('run-test', started.operation.id, { files: [file] });
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test');
+  f.as(f.zhongshu); f.plan();
+  const replanned = f.w.run('run-test').items['W-001'];
+  assert.equal(replanned.result, null); assert.equal(replanned.revision, 2);
+  f.root();
+  const amended = f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' });
+  assert.deepEqual(amended.item.resources, ['vite-5217']);
+  assert.equal(amended.item.revision, 3);
+});
+
+test('amend bumps the revision so a settled stale executor result is archived only', t => {
+  const f = fixture(t), started = f.launch('W-001', { reads: [], writes: ['src/a.txt'] });
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test');
+  const before = f.w.run('run-test').items['W-001'].revision;
+  for (const input of [null, ['vite-5217'], 'vite-5217']) assert.throws(() => f.w.amend('run-test', 'W-001', input), /需求修訂輸入必須是 JSON 物件/);
+  f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' });
+  const item = f.w.run('run-test').items['W-001'];
+  assert.equal(item.revision, before + 1); assert.equal(item.plan, null);
+  const file = path.join(f.project, 'src/a.txt'); fs.writeFileSync(file, 'late');
+  f.as(started.member);
+  const late = f.w.result('run-test', started.operation.id, { files: [file] });
+  assert.equal(late.archivedOnly, true);
+  assert.equal(f.w.run('run-test').items['W-001'].result, null);
+});
+
+test('amend is refused while an executor of the generation is outstanding and after closure', t => {
+  const f = fixture(t); f.launch();
+  f.root();
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' }), /在途或未確認的執行代理/);
+  f.w.add('run-test', { id: 'W-002', title: 'Design only', requirement: 'Design', reads: ['src'], writes: [], resources: [], acceptance: ['Design reviewed'] });
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', 'W-002', { generation: 1, description: 'Design', reads: ['src'], writes: [] });
+  f.w.launch('run-test', 'menxia', 'head', 'W-002', { spec: 'Review W-002', generation: 1 });
+  f.as(f.menxia);
+  f.w.review('run-test', 'W-002', { generation: 1, kind: 'plan-approval', digest: proposal.digest, verdict: 'approved', evidence: [f.proof] });
+  f.w.review('run-test', 'W-002', { generation: 1, kind: 'closure-confirmation', digest: proposal.digest, verdict: 'approved', evidence: [f.proof] });
+  f.root();
+  assert.throws(() => f.w.amend('run-test', 'W-002', { generation: 1, resources: ['x'], reason: 'late' }), /已結案/);
+  f.w.control('run-test', 'cancel', 'W-001');
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['x'], reason: 'late' }), /已結案、取消/);
+});
+
 test('unknown native start is durable, keeps its slot and is never automatically retried', t => {
   const f = fixture(t); const calls = f.runtime.calls.length;
   f.runtime.start = () => { f.runtime.calls.push('unknown'); throw new Error('response lost'); };

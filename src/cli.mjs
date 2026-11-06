@@ -32,6 +32,8 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
 
 頭領與執行代理的工作操作：
   edict work add --run <RunID> --spec-file <JSON|-> --session <ID>
+  edict work amend --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+    （僅原協調者；只改需求 resources，JSON 為 {generation, resources, reason}；清除現有方案與核可）
   edict work plan --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict work show --run <RunID> --session <ID>
   edict team ensure <角色> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
@@ -222,11 +224,15 @@ export async function main(argv) {
       if (!options.work) throw new Error('必須指定 --work');
       print(workflow.plan(options.run, options.work, input())); return 0;
     }
+    if (sub === 'amend') {
+      if (!options.work) throw new Error('必須指定 --work');
+      print(workflow.amend(options.run, options.work, input())); return 0;
+    }
     if (sub === 'result') {
       if (!options.operation) throw new Error('必須指定 --operation');
       print(workflow.result(options.run, options.operation, input())); return 0;
     }
-    throw new Error('work 支援 add、plan、result、show');
+    throw new Error('work 支援 add、amend、plan、result、show');
   }
   if (command === 'team') {
     if (sub === 'send') { const data=input(); print(workflow.message(options.run, role, options.work, data.body, undefined, data.generation, data.kind || 'handoff')); return 0; }
