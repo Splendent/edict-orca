@@ -68,6 +68,8 @@ test('read/write overlaps hold conflicting work; separate declared ranges can ru
   const selection=selectReady(tasks,rows,rows,3);
   assert.deepEqual(selection.selected.map(x=>x.task),['task-a','task-c']);
   assert.deepEqual(selection.held.map(x=>x.taskId),['task-b','task-d']);
+  assert.match(selection.held[0].reason,/Task task-a（寫入\/寫入：本次寫入 src\/frontend\/index\.js，同批寫入 src\/frontend）/);
+  assert.match(selection.held[1].reason,/Task task-a（讀取\/寫入：本次讀取 src\/frontend，同批寫入 src\/frontend）/);
 });
 test('uncreated worktrees have unknown physical ranges and serialize writers',t=>{
   const f=fixture(t),p=f.plan(['a','b'].map(s=>({task:'task-'+s,role:'bingbu',readOnly:false,writes:['src'],reads:[],worktree:'new-top-level',repo:'id:repo',name:'isolated-'+s})));

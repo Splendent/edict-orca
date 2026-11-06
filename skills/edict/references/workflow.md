@@ -46,6 +46,44 @@ edict work add --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --spec-file /
 
 新項目自動從 generation 1 開始。reads／writes 是專案相對檔案或目錄，可用單獨 `*`，不接受 glob 或越出專案的路徑。resources 是明確互斥資源名稱；所有後續範圍必須是需求授權的子集。
 
+### 讀取其他工作樹（extraReads）
+
+需求、方案與委派可另以 extraReads 宣告 Run 專案以外的讀取根目錄，例如工作要從另一個 git 工作樹搬移成果：
+
+```json
+{"extraReads":[{"root":"C:/Users/USER/orca/workspaces/vampire-web/poe-gems-batch1","reads":["src","public"]}]}
+```
+
+root 必須是既有目錄的絕對路徑（Windows 須含磁碟代號或 UNC）；工具以實際路徑保存；同一目錄的多筆項目合併，比對子集時以實體目錄識別，因此 UNC（例如 `\\localhost\C$\...`）與磁碟代號寫法指向同一目錄時視為相同根目錄。reads 相對該根目錄，規則與專案 reads 相同，不接受 `..`、絕對路徑或 glob。方案的 extraReads 省略時沿用需求，委派省略時沿用方案；每個根目錄及其 reads 都必須是上一層的子集。派工時這些範圍與專案 reads 一起計入讀取占用，以實體路徑比對：其他操作正在寫入該工作樹（例如以 `path:` 派工到該目錄）的重疊路徑時拒絕派工，範圍不重疊時可並行。extraReads 只授權讀取；writes 仍只限該委派的單一工作樹（current、new-child 或 `path:`）。
+
+### git 中繼資料資源（git:）
+
+commit、merge、rebase、建立分支或標籤等會寫入 git 中繼資料（refs、物件、設定等）的操作，必須在 resources 宣告 `git:<common dir>`。同一 repo 的所有工作樹共用一個 common dir，因此兩個宣告同一 common dir 的操作會以既有資源互斥機制排隊，不同 repo 不互相阻擋。取得 common dir 的絕對路徑：
+
+```sh
+git -C /absolute/worktree rev-parse --path-format=absolute --git-common-dir
+```
+
+例如 `C:/Users/USER/orca/workspaces/vampire-web/urchin` 的 `.git` 是指向 `C:/workspace/vampire-web/.git/worktrees/urchin` 的檔案，其 common dir 為 `C:/workspace/vampire-web/.git`，資源寫成 `git:C:/workspace/vampire-web/.git`。工具核對該目錄存在且含 `HEAD`，拒絕單一工作樹的 git dir（含 `commondir` 檔，例如 `.git/worktrees/urchin`），並把名稱正規化為實際路徑，不同寫法指向同一 repo 時視為同一資源。git 中繼資料不屬於任何專案相對路徑，writes 不涵蓋它；未宣告 `git:` 資源的委派不得 commit 或 merge。這是協作占用約定，不是 OS 存取沙箱。
+
+建立前 root 先依 [啟用後的協調流程](active.md) 與在途及排隊項目比對 reads／writes／resources／相依。沒有實際重疊時，為新項目選用不同的資源名稱（例如另一個 port）或工作樹，不沿用其他項目的互斥資源。
+
+### root 修訂需求
+
+需求建立後，原對話可用 `work amend` 取代 resources，或擴大 reads 與 extraReads。writes、驗收等其他欄位不能用此命令變更：
+
+```sh
+edict work amend --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-amend.json
+```
+
+`/tmp/edict-amend.json`：
+
+```json
+{"generation":1,"resources":["vite-5217"],"reads":["src","api","vite.config.ts","package.json"],"reason":"vite-5216 由 W-013 使用，改用獨立 port；實作須讀取 api 與建置設定"}
+```
+
+JSON 只接受 generation、resources、reads、extraReads、reason，三個範圍欄位至少提供一項，省略的欄位不變。resources 為修訂後的完整清單，可任意取代。reads 與 extraReads 也是修訂後的完整清單，但只能擴大：新的 reads 必須涵蓋目前每個 reads，extraReads 必須保留目前每個根目錄並涵蓋其 reads，縮小一律拒絕。JSON 帶 writes 時拒絕；需要新的寫入範圍時建立新工作項目（`control restart` 保留原 writes，不能用來改寫入範圍）。以下情況拒絕且不改資料：呼叫者不是原對話、generation 與目前世代不符、項目已 Done 或已取消、Run 已取消或停用、本世代仍有在途或結果未確認的 executor 操作、本世代已有交付成果（已提交 work result 的 implementation，含已結束者）。已有成果時須以 `control cancel`／`restart` 重新授權或建立新工作項目。暫停中的項目或 Run 仍可修訂。修訂成功會清除目前方案並遞增 revision，只擴大 reads 或 extraReads 也一樣，因此原有門下核可隨之失效；舊方案的 executor 之後提交的成果只封存，不計入交付。中書須依修訂後的需求重新 `work plan`，門下重新審查後才能派工。修訂內容（`changes` 內各欄位的原值與新值、原因、被清除的方案 digest）記錄在 `work show` 的 `history`。v0.4.0-beta.7 寫入的修訂紀錄格式為 `{field, from, to}`（只有 resources），v0.4.0-beta.8 起為 `{changes}`；既有資料可能同時含兩種格式，讀取時兩者都要處理。
+
 root 以無 work 的三次 ensure 建立平行頭領：
 
 ```sh
@@ -86,6 +124,14 @@ edict work plan --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
 
 保存回傳的 `digest`、`revision` 與 generation。dependencies 使用工作項目 ID，需等相依項目 Done 才派工；不是原生 Task ID。共同介面由指定負責者提出，不讓多位作者各自假定。
 
+方案的 description 必須包含「並行分析」：先 `work show` 列出所有在途或排隊（未 Done、未取消）的其他項目，逐項比對本方案的 reads、writes、resources 與 dependencies，對每一項寫出「可並行」或「需排隊」及具體原因，例如「W-013 寫入 src/vfx，本方案只讀寫 src/growth，資源不同，可並行」或「W-014 寫入 src/codex，本方案讀取 src/codex，需排隊」。判斷基準：
+
+- 任一方寫入的路徑與另一方讀取或寫入的路徑重疊，需排隊。
+- 唯一衝突是共用的工具資源（例如同一個 dev server port），而檔案範圍沒有重疊時，不排隊；改提出不同的資源名稱（例如 vite-5217）。該資源不在需求授權內時，以原生 ask 請 root 以 `work amend` 修訂需求資源，再提交方案。
+- dependencies 只列真正需要前一項成果的項目；能獨立驗收的項目不列為相依。
+
+寬的讀取範圍同樣會占用：讀取整個 `src` 的委派會阻擋其他項目對 `src` 底下任何路徑的寫入，反之亦然。方案及後續 delegate 都應宣告實際需要的最窄 reads／writes，不以 `src` 或 `*` 代替具體目錄。工具拒絕派工時會列出衝突的工作 ID、角色／職位、operation ID 與衝突維度（共用工具資源，或寫入/寫入、寫入/讀取、讀取/寫入的宣告範圍），據此調整範圍或改為排隊。
+
 中書用 `/tmp/edict-head-work.json` 授予既有門下 scope；該檔也供核可後授予尚書使用：
 
 ```json
@@ -119,6 +165,8 @@ ensure 的既有成員回應只是授權 scope，不會自動喚醒；必須另�
 ```sh
 edict review record --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-plan-review.json
 ```
+
+門下審查必須核對中書的並行分析：在途及排隊項目是否列齊、每個「可並行」結論是否確實沒有讀寫重疊、每個「需排隊」是否有實際重疊或真正相依，以及只因共用工具資源而排隊時是否已提出不同資源名稱。缺少或有誤即退回，不以「保守排隊」代替分析。
 
 `verdict` 只接受 approved／rejected。證據必須是有內容依據且可讀取的實際檔案；工具保存其內容摘要。`digest` 指方案或成果的回傳摘要，不是證據檔摘要，也不是自行填寫的版本號。證據檔或方案變更後不可沿用舊放行。
 
@@ -202,6 +250,8 @@ edict sync --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
 edict review record --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-closure.json
 edict work show --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID"
 ```
+
+設計型工作（需求 writes 為空、沒有任何 implementation 交付）以方案本體為交付物：門下核可方案後，closure-confirmation 的 digest 填目前方案 digest，不需 work result 與刑部 artifact-acceptance；仍須沒有在途 executor。只要需求授權了寫入，就必須有成果與刑部驗收。
 
 核對 W-001 為 Done 才回報該項完成。原生 completed、給事中通過文字、最後一位郎中的成功回報或尚書單方面同意均不足以結案。退回只修具體缺口；方案變更須重審，成果變更須重新驗收，不保留舊摘要的有效性。
 

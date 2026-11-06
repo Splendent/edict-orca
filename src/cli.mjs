@@ -32,6 +32,9 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
 
 頭領與執行代理的工作操作：
   edict work add --run <RunID> --spec-file <JSON|-> --session <ID>
+  edict work amend --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
+    （僅原協調者；JSON 為 {generation, resources?, reads?, extraReads?, reason}：resources 整份取代，
+     reads／extraReads 只能擴大，writes 不能修訂；清除現有方案與核可）
   edict work plan --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict work show --run <RunID> --session <ID>
   edict team ensure <角色> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
@@ -44,6 +47,8 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
   edict sync --run <RunID> --session <ID>
   edict recover --run <RunID> --operation <ID> --session <ID>
 
+需求、方案與委派可用 extraReads: [{root: <既有目錄絕對路徑>, reads: [<相對該目錄的路徑>]}] 讀取其他工作樹；寫入只限單一工作樹。
+commit、merge 等寫入 git 中繼資料的操作宣告資源 git:<git rev-parse --git-common-dir 的絕對路徑>，同一 repo 互斥。
 業務 JSON 必須引用 generation。核可、成果驗收與門下結案分別記錄。
 角色與 --member 不是憑證：權限由原生 Run／Dispatch 與團隊綁定確認。
 控制關閉新准入；在途操作須核對，取消受理不等於所有程序已停止。
@@ -222,11 +227,15 @@ export async function main(argv) {
       if (!options.work) throw new Error('必須指定 --work');
       print(workflow.plan(options.run, options.work, input())); return 0;
     }
+    if (sub === 'amend') {
+      if (!options.work) throw new Error('必須指定 --work');
+      print(workflow.amend(options.run, options.work, input())); return 0;
+    }
     if (sub === 'result') {
       if (!options.operation) throw new Error('必須指定 --operation');
       print(workflow.result(options.run, options.operation, input())); return 0;
     }
-    throw new Error('work 支援 add、plan、result、show');
+    throw new Error('work 支援 add、amend、plan、result、show');
   }
   if (command === 'team') {
     if (sub === 'send') { const data=input(); print(workflow.message(options.run, role, options.work, data.body, undefined, data.generation, data.kind || 'handoff')); return 0; }
