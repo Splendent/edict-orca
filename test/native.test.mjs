@@ -33,9 +33,9 @@ test('native calls request full records only for orchestration commands', t => {
 test('an unverified start that still returns the Task/Dispatch pair is kept as a receipt', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-native-unverified-'));
   const command = path.join(dir, 'orca-fixture');
-  fs.writeFileSync(command, '#!/usr/bin/env node
+  fs.writeFileSync(command, `#!/usr/bin/env node
 console.log(JSON.stringify({ok:true,result:{runId:"run-example",taskId:"task-x",dispatchId:"ctx-x",state:"outcome_unknown",stage:"turn_start_unobserved"}}));process.exit(1);
-', { mode: 0o755 });
+`, { mode: 0o755 });
   const previous = process.env.ORCA_CLI_COMMAND; process.env.ORCA_CLI_COMMAND = command;
   t.after(() => { if (previous === undefined) delete process.env.ORCA_CLI_COMMAND; else process.env.ORCA_CLI_COMMAND = previous; fs.rmSync(dir, { recursive: true, force: true }); });
   const native = new NativeRuntime();

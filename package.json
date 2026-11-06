@@ -20,7 +20,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/session.mjs && node --check src/install.mjs && node --check src/orca.mjs && node --check src/schedule.mjs && node --check src/ranges.mjs && node --check src/update.mjs && node --check src/native.mjs && node --check src/workflow.mjs && node --check src/config.mjs && node --check src/configure.mjs && node --check src/roles.mjs"
+    "check": "node scripts/check-syntax.mjs"
   },
   "license": "MIT"
 }
