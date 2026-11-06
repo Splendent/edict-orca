@@ -174,7 +174,7 @@ Cursor 作為目前對話的協調者時，init 帶 `--coordinator cursor`。首
 
 | 階段 | 入口與決策者 |
 | --- | --- |
-| 建立需求與三省 | root 先比對在途項目決定並行或排隊，`run open`、`work add`，無 work 的 `team ensure` 建立三省平行頭領；只改需求資源用 `work amend` |
+| 建立需求與三省 | root 先比對在途項目決定並行或排隊，`run open`、`work add`，無 work 的 `team ensure` 建立三省平行頭領；修訂需求資源或擴大讀取範圍用 `work amend` |
 | 規劃與送審 | 中書 `work plan`（含並行分析），以 `team ensure menxia --work` 授予既有門下工作範圍，再 `team send` |
 | 放行與實作 | 門下 `review record` 記 plan-approval；中書或門下授予既有尚書工作；尚書建六部頭領，各部 `delegate` |
 | 成果與驗收 | implementation executor `work result`；刑部 artifact-acceptance；原生結束後 `sync` |

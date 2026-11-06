@@ -8,7 +8,7 @@ session 與 Run 是不同識別。每個新獨立目標由原對話執行 `run o
 
 以下五個階段是角色流程，使用者不需手動逐次轉交。具體 JSON 與命令見 [工作契約](workflow.md)。
 
-1. root 建立需求項目前，先 `work show` 與所有在途及排隊項目比對 reads、writes、resources 與相依。`work show` 只列一個 Run，而派工衝突檢查涵蓋本機所有 Run 的在途操作，因此每個仍有在途工作的 Run 都要分別 `work show` 核對。沒有實際讀寫重疊時，為新項目選用不同的資源名稱（例如另一個 port）或工作樹，不沿用其他項目的互斥資源；有重疊或真正相依時才排隊。建立後先告訴使用者並行或排隊的決定與原因，例如「W-015 與 W-013 檔案不重疊，改用 vite-5217，可並行；W-014 需等 W-013 結案」。已建立的項目只差資源時，用 `work amend` 修訂需求資源，不取消重建。root 建立需求項目及三省平行頭領：無 work 的 `team ensure zhongshu`、`team ensure menxia`、`team ensure shangshu`。中書 scope 為 `*`；門下與尚書先為空 scope，只等待合法業務，不審查、不派實作。
+1. root 建立需求項目前，先 `work show` 與所有在途及排隊項目比對 reads、writes、resources 與相依。`work show` 只列一個 Run，而派工衝突檢查涵蓋本機所有 Run 的在途操作，因此每個仍有在途工作的 Run 都要分別 `work show` 核對。沒有實際讀寫重疊時，為新項目選用不同的資源名稱（例如另一個 port）或工作樹，不沿用其他項目的互斥資源；有重疊或真正相依時才排隊。建立後先告訴使用者並行或排隊的決定與原因，例如「W-015 與 W-013 檔案不重疊，改用 vite-5217，可並行；W-014 需等 W-013 結案」。已建立的項目只差資源或需要更多讀取範圍時，用 `work amend` 修訂需求的 resources，或擴大 reads／extraReads，不取消重建；writes 不能修訂。需要讀取其他工作樹時以 extraReads 宣告；會 commit 或 merge 的工作在 resources 宣告 `git:<common dir>`，詳見工作契約。root 建立需求項目及三省平行頭領：無 work 的 `team ensure zhongshu`、`team ensure menxia`、`team ensure shangshu`。中書 scope 為 `*`；門下與尚書先為空 scope，只等待合法業務，不審查、不派實作。
 2. 中書拆分真正獨立項目，必要時 `delegate zhongshu` 交舍人調查。中書頭領以 `work plan` 保存方案，方案須含並行分析（與每個在途及排隊項目的比對及「可並行」或「需排隊」結論），然後 `team ensure menxia --work` 授予既有門下該項目，`team send` 送審。重複 ensure 不另開同一角色頭領，grant 也不自動喚醒。
 3. 門下頭領依原始需求、方案、並行分析、證據及驗收，以 `review record` 保存 plan-approval；給事中可分工審查，但不能代替頭領的正式放行。退回交中書修正；三輪仍未通過回報具體缺口，不強制批准。
 4. 核可後由中書或門下 `team ensure shangshu --work` 授予既有尚書工作，再 `team send`。尚書建立相關六部頭領，各部頭領自行 `delegate` 本部 executor。無關工作可先進行；共同介面與真正前置未齊者等待，不重建 Task 取代等待。

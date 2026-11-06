@@ -46,11 +46,31 @@ edict work add --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --spec-file /
 
 新項目自動從 generation 1 開始。reads／writes 是專案相對檔案或目錄，可用單獨 `*`，不接受 glob 或越出專案的路徑。resources 是明確互斥資源名稱；所有後續範圍必須是需求授權的子集。
 
+### 讀取其他工作樹（extraReads）
+
+需求、方案與委派可另以 extraReads 宣告 Run 專案以外的讀取根目錄，例如工作要從另一個 git 工作樹搬移成果：
+
+```json
+{"extraReads":[{"root":"C:/Users/USER/orca/workspaces/vampire-web/poe-gems-batch1","reads":["src","public"]}]}
+```
+
+root 必須是既有目錄的絕對路徑（Windows 須含磁碟代號或 UNC）；工具以實際路徑保存；同一目錄的多筆項目合併，比對子集時以實體目錄識別，因此 UNC（例如 `\\localhost\C$\...`）與磁碟代號寫法指向同一目錄時視為相同根目錄。reads 相對該根目錄，規則與專案 reads 相同，不接受 `..`、絕對路徑或 glob。方案的 extraReads 省略時沿用需求，委派省略時沿用方案；每個根目錄及其 reads 都必須是上一層的子集。派工時這些範圍與專案 reads 一起計入讀取占用，以實體路徑比對：其他操作正在寫入該工作樹（例如以 `path:` 派工到該目錄）的重疊路徑時拒絕派工，範圍不重疊時可並行。extraReads 只授權讀取；writes 仍只限該委派的單一工作樹（current、new-child 或 `path:`）。
+
+### git 中繼資料資源（git:）
+
+commit、merge、rebase、建立分支或標籤等會寫入 git 中繼資料（refs、物件、設定等）的操作，必須在 resources 宣告 `git:<common dir>`。同一 repo 的所有工作樹共用一個 common dir，因此兩個宣告同一 common dir 的操作會以既有資源互斥機制排隊，不同 repo 不互相阻擋。取得 common dir 的絕對路徑：
+
+```sh
+git -C /absolute/worktree rev-parse --path-format=absolute --git-common-dir
+```
+
+例如 `C:/Users/USER/orca/workspaces/vampire-web/urchin` 的 `.git` 是指向 `C:/workspace/vampire-web/.git/worktrees/urchin` 的檔案，其 common dir 為 `C:/workspace/vampire-web/.git`，資源寫成 `git:C:/workspace/vampire-web/.git`。工具核對該目錄存在且含 `HEAD`，拒絕單一工作樹的 git dir（含 `commondir` 檔，例如 `.git/worktrees/urchin`），並把名稱正規化為實際路徑，不同寫法指向同一 repo 時視為同一資源。git 中繼資料不屬於任何專案相對路徑，writes 不涵蓋它；未宣告 `git:` 資源的委派不得 commit 或 merge。這是協作占用約定，不是 OS 存取沙箱。
+
 建立前 root 先依 [啟用後的協調流程](active.md) 與在途及排隊項目比對 reads／writes／resources／相依。沒有實際重疊時，為新項目選用不同的資源名稱（例如另一個 port）或工作樹，不沿用其他項目的互斥資源。
 
-### root 修訂需求資源
+### root 修訂需求
 
-需求的 resources 建立後只能由原對話以 `work amend` 修改，reads、writes、驗收等其他欄位不能用此命令變更：
+需求建立後，原對話可用 `work amend` 取代 resources，或擴大 reads 與 extraReads。writes、驗收等其他欄位不能用此命令變更：
 
 ```sh
 edict work amend --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-amend.json
@@ -59,10 +79,10 @@ edict work amend --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-00
 `/tmp/edict-amend.json`：
 
 ```json
-{"generation":1,"resources":["vite-5217"],"reason":"vite-5216 由 W-013 使用；本項與其沒有檔案重疊，改用獨立 port 以便並行"}
+{"generation":1,"resources":["vite-5217"],"reads":["src","api","vite.config.ts","package.json"],"reason":"vite-5216 由 W-013 使用，改用獨立 port；實作須讀取 api 與建置設定"}
 ```
 
-JSON 只接受 generation、resources、reason，resources 為修訂後的完整清單。以下情況拒絕且不改資料：呼叫者不是原對話、generation 與目前世代不符、項目已 Done 或已取消、Run 已取消或停用、本世代仍有在途或結果未確認的 executor 操作、本世代已有交付成果（已提交 work result 的 implementation，含已結束者）。已有成果時須以 `control cancel`／`restart` 重新授權或建立新工作項目。暫停中的項目或 Run 仍可修訂。修訂成功會清除目前方案並遞增 revision，因此原有門下核可隨之失效；舊方案的 executor 之後提交的成果只封存，不計入交付。中書須以新資源重新 `work plan`，門下重新審查後才能派工。修訂內容（原值、新值、原因、被清除的方案 digest）記錄在 `work show` 的 `history`。
+JSON 只接受 generation、resources、reads、extraReads、reason，三個範圍欄位至少提供一項，省略的欄位不變。resources 為修訂後的完整清單，可任意取代。reads 與 extraReads 也是修訂後的完整清單，但只能擴大：新的 reads 必須涵蓋目前每個 reads，extraReads 必須保留目前每個根目錄並涵蓋其 reads，縮小一律拒絕。JSON 帶 writes 時拒絕；需要新的寫入範圍時建立新工作項目（`control restart` 保留原 writes，不能用來改寫入範圍）。以下情況拒絕且不改資料：呼叫者不是原對話、generation 與目前世代不符、項目已 Done 或已取消、Run 已取消或停用、本世代仍有在途或結果未確認的 executor 操作、本世代已有交付成果（已提交 work result 的 implementation，含已結束者）。已有成果時須以 `control cancel`／`restart` 重新授權或建立新工作項目。暫停中的項目或 Run 仍可修訂。修訂成功會清除目前方案並遞增 revision，只擴大 reads 或 extraReads 也一樣，因此原有門下核可隨之失效；舊方案的 executor 之後提交的成果只封存，不計入交付。中書須依修訂後的需求重新 `work plan`，門下重新審查後才能派工。修訂內容（`changes` 內各欄位的原值與新值、原因、被清除的方案 digest）記錄在 `work show` 的 `history`。v0.4.0-beta.7 寫入的修訂紀錄格式為 `{field, from, to}`（只有 resources），v0.4.0-beta.8 起為 `{changes}`；既有資料可能同時含兩種格式，讀取時兩者都要處理。
 
 root 以無 work 的三次 ensure 建立平行頭領：
 

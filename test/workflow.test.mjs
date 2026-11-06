@@ -261,7 +261,8 @@ test('root amends requirement resources, clearing plan approval and recording hi
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'port' }), /只有原對話/);
   f.root();
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 2, resources: ['vite-5217'], reason: 'port' }), /工作世代不符/);
-  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], writes: ['src'], reason: 'port' }), /只接受 generation、resources、reason/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], acceptance: ['x'], reason: 'port' }), /只接受 generation、resources、reads、extraReads、reason/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, reason: 'nothing' }), /至少須提供 resources、reads 或 extraReads/);
   assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'] }), /缺少 reason/);
   const result = f.w.amend('run-test', 'W-001', { generation: 1, resources: ['vite-5217'], reason: 'vite-5216 is used by W-002' });
   const run = f.w.run('run-test'), item = run.items['W-001'];
@@ -270,7 +271,7 @@ test('root amends requirement resources, clearing plan approval and recording hi
   assert.equal(item.generation, 1);
   assert.deepEqual(run.history.at(-1), { ...result.amendment });
   assert.equal(run.history.at(-1).action, 'amend');
-  assert.deepEqual(run.history.at(-1).from, []);
+  assert.deepEqual(run.history.at(-1).changes, { resources: { from: [], to: ['vite-5217'] } });
   assert.equal(run.history.at(-1).clearedPlan.digest, f.proposal.digest);
   f.as(f.bingbu);
   assert.throws(() => f.launch(), /必須有中書送審方案/);
@@ -322,6 +323,110 @@ test('amend bumps the revision so a settled stale executor result is archived on
   const late = f.w.result('run-test', started.operation.id, { files: [file] });
   assert.equal(late.archivedOnly, true);
   assert.equal(f.w.run('run-test').items['W-001'].result, null);
+});
+
+// Adds an approved item with a bingbu head so executors can be delegated for it.
+function approvedItem(f, id, requirement, plan = requirement) {
+  f.root(); f.w.add('run-test', { id, title: id, requirement: id, acceptance: ['Check'], ...requirement });
+  f.as(f.zhongshu);
+  const proposal = f.w.plan('run-test', id, { generation: 1, description: id, ...plan });
+  f.w.launch('run-test', 'menxia', 'head', id, { spec: 'Review', generation: 1 });
+  f.as(f.menxia); f.approve(proposal.digest, id); f.as(f.zhongshu);
+  f.w.launch('run-test', 'shangshu', 'head', id, { spec: 'Coordinate', generation: 1 });
+  f.as(f.shangshu); f.w.launch('run-test', 'bingbu', 'head', id, { spec: 'Implement', generation: 1 });
+  f.as(f.bingbu);
+  return proposal;
+}
+function otherRoot(f) {
+  const other = path.join(f.dir, 'other-worktree');
+  fs.mkdirSync(path.join(other, 'src'), { recursive: true }); fs.mkdirSync(path.join(other, 'public'), { recursive: true });
+  return other;
+}
+
+test('amend widens reads and extraReads but never narrows them or changes writes', t => {
+  const f = fixture(t), other = otherRoot(f);
+  f.root();
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, reads: ['src/a'], reason: 'narrow' }), /reads 只能擴大/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, writes: ['src', 'api'], reason: 'more writes' }), /writes 不能修訂/);
+  const widened = f.w.amend('run-test', 'W-001', { generation: 1, reads: ['src', 'api', 'vite.config.ts'], extraReads: [{ root: other, reads: ['src'] }], reason: 'needs api and the other worktree' });
+  const item = f.w.run('run-test').items['W-001'];
+  assert.deepEqual(item.reads, ['src', 'api', 'vite.config.ts']);
+  assert.deepEqual(item.writes, ['src']);
+  assert.equal(item.extraReads[0].root, fs.realpathSync.native(other));
+  assert.equal(item.plan, null);
+  assert.deepEqual(Object.keys(widened.amendment.changes), ['reads', 'extraReads']);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [], reason: 'narrow' }), /extraReads 只能擴大/);
+  assert.throws(() => f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [{ root: other, reads: ['src/a'] }], reason: 'narrow' }), /extraReads 只能擴大/);
+  f.w.amend('run-test', 'W-001', { generation: 1, extraReads: [{ root: other, reads: ['src', 'public'] }], reason: 'wider' });
+  f.as(f.zhongshu);
+  assert.throws(() => f.w.plan('run-test', 'W-001', { generation: 1, description: 'too wide', reads: ['src'], writes: ['src'], extraReads: [{ root: f.dir, reads: ['src'] }] }), /方案超出需求授權範圍/);
+  const plan = f.w.plan('run-test', 'W-001', { generation: 1, description: 'cross root', reads: ['src'], writes: ['src'], extraReads: [{ root: other, reads: ['src'] }] });
+  assert.deepEqual(plan.extraReads[0].reads, ['src']);
+  f.as(f.menxia); f.approve(plan.digest);
+  f.as(f.bingbu);
+  assert.throws(() => f.launch('W-001', { extraReads: [{ root: other, reads: ['public'] }] }), /委派超出已核可範圍/);
+  assert.equal(f.launch('W-001', { reads: ['src'], writes: ['src/a.txt'] }).operation.extraReads[0].reads[0], 'src');
+});
+
+test('extraReads accept only existing absolute directories with contained relative reads', t => {
+  const f = fixture(t), other = otherRoot(f);
+  f.root();
+  const add = extraReads => f.w.add('run-test', { id: `W-${Math.random()}`, title: 'x', requirement: 'x', reads: ['src'], writes: [], extraReads, acceptance: ['Check'] });
+  assert.throws(() => add([{ root: 'other-worktree', reads: ['src'] }]), /必須是既有目錄的絕對路徑/);
+  assert.throws(() => add([{ root: path.join(f.dir, 'missing'), reads: ['src'] }]), /不存在/);
+  assert.throws(() => add([{ root: path.join(f.proof), reads: ['src'] }]), /不是目錄/);
+  for (const escape of ['../project/src', '/etc', 'C:/x', 'src/*'])
+    assert.throws(() => add([{ root: other, reads: [escape] }]), /工作範圍只接受專案相對路徑或單獨的 \*/);
+  assert.throws(() => add([{ root: other, reads: [] }]), /不可為空/);
+  assert.throws(() => add([{ root: other, reads: ['src'], writes: ['src'] }]), /只接受 root 與 reads/);
+  assert.throws(() => add({ root: other, reads: ['src'] }), /物件陣列/);
+  const item = add([{ root: other + path.sep, reads: ['src'] }, { root: other, reads: ['public'] }]);
+  assert.deepEqual(item.extraReads, [{ root: fs.realpathSync.native(other), reads: ['src', 'public'] }]);
+});
+
+test('UNC and drive-letter spellings of one extraReads root are the same root', t => {
+  const f = fixture(t), other = fs.realpathSync.native(otherRoot(f));
+  const drive = /^([A-Za-z]):\\(.*)$/.exec(other);
+  const unc = drive && `\\\\localhost\\${drive[1]}$\\${drive[2]}`;
+  if (process.platform !== 'win32' || !unc || !fs.existsSync(unc)) return t.skip('administrative share \\\\localhost\\<drive>$ unavailable');
+  approvedItem(f, 'W-002', { reads: ['src'], writes: [], extraReads: [{ root: other, reads: ['src', 'public'] }] }, { reads: ['src'], writes: [], extraReads: [{ root: unc, reads: ['src'] }] });
+  assert.equal(f.w.launch('run-test', 'bingbu', 'executor', 'W-002', { spec: 'Read via share', generation: 1, extraReads: [{ root: unc, reads: ['src'] }] }).confirmed, true);
+  f.root();
+  const merged = f.w.add('run-test', { id: 'W-003', title: 'x', requirement: 'x', reads: ['src'], writes: [], extraReads: [{ root: other, reads: ['src'] }, { root: unc, reads: ['public'] }], acceptance: ['Check'] });
+  assert.deepEqual(merged.extraReads, [{ root: other, reads: ['src', 'public'] }]);
+  f.w.amend('run-test', 'W-003', { generation: 1, extraReads: [{ root: unc, reads: ['src', 'public', 'docs'] }], reason: 'share spelling' });
+});
+
+test('a cross-root read conflicts with a writer in that root and passes disjoint ranges', t => {
+  const f = fixture(t), other = otherRoot(f);
+  approvedItem(f, 'W-002', { reads: ['src'], writes: ['src'] });
+  const writer = f.launch('W-002', { reads: [], writes: ['src'], worktree: `path:${other}` });
+  approvedItem(f, 'W-003', { reads: ['src/docs'], writes: [], extraReads: [{ root: other, reads: ['src', 'public'] }] });
+  const error = (() => { try { f.w.launch('run-test', 'bingbu', 'executor', 'W-003', { spec: 'Read the other worktree', generation: 1, extraReads: [{ root: other, reads: ['src'] }] }); } catch (e) { return e; } })();
+  assert.match(error.message, new RegExp(`W-002 bingbu/executor 操作 ${writer.operation.id}`));
+  assert.match(error.message, /讀取\/寫入：本次讀取 src\/docs, .*other-worktree\/src，在途寫入 src/);
+  const reader = f.w.launch('run-test', 'bingbu', 'executor', 'W-003', { spec: 'Read public only', generation: 1, extraReads: [{ root: other, reads: ['public'] }] });
+  assert.equal(reader.confirmed, true);
+});
+
+test('git metadata resources are canonicalised so one common dir is exclusive', t => {
+  const f = fixture(t), common = path.join(f.dir, 'repo.git');
+  fs.mkdirSync(path.join(common, 'worktrees', 'urchin'), { recursive: true });
+  fs.writeFileSync(path.join(common, 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(common, 'worktrees', 'urchin', 'HEAD'), 'ref: refs/heads/x\n');
+  fs.writeFileSync(path.join(common, 'worktrees', 'urchin', 'commondir'), '../..\n');
+  f.root();
+  const add = resources => f.w.add('run-test', { id: `W-${Math.random()}`, title: 'x', requirement: 'x', reads: ['src'], writes: [], resources, acceptance: ['Check'] });
+  assert.throws(() => add(['git:relative/.git']), /必須是既有目錄的絕對路徑/);
+  assert.throws(() => add([`git:${path.join(f.dir, 'missing.git')}`]), /不存在/);
+  assert.throws(() => add([`git:${f.project}`]), /git common dir/);
+  assert.throws(() => add([`git:${path.join(common, 'worktrees', 'urchin')}`]), /單一工作樹的 git dir/);
+  const canonical = `git:${fs.realpathSync.native(common).replaceAll('\\', '/')}`;
+  assert.deepEqual(add([`git:${common}${path.sep}`, 'vite-5216']).resources, [canonical, 'vite-5216']);
+  approvedItem(f, 'W-002', { reads: ['src/a'], writes: ['src/a'], resources: [`git:${common}`] });
+  const commit = f.launch('W-002');
+  approvedItem(f, 'W-003', { reads: ['src/b'], writes: ['src/b'], resources: [`git:${common.replaceAll('\\', '/')}/`] });
+  assert.throws(() => f.launch('W-003'), new RegExp(`操作 ${commit.operation.id}（共用工具資源 git:`));
 });
 
 test('amend is refused while an executor of the generation is outstanding and after closure', t => {
