@@ -46,6 +46,24 @@ edict work add --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --spec-file /
 
 新項目自動從 generation 1 開始。reads／writes 是專案相對檔案或目錄，可用單獨 `*`，不接受 glob 或越出專案的路徑。resources 是明確互斥資源名稱；所有後續範圍必須是需求授權的子集。
 
+建立前 root 先依 [啟用後的協調流程](active.md) 與在途及排隊項目比對 reads／writes／resources／相依。沒有實際重疊時，為新項目選用不同的資源名稱（例如另一個 port）或工作樹，不沿用其他項目的互斥資源。
+
+### root 修訂需求資源
+
+需求的 resources 建立後只能由原對話以 `work amend` 修改，reads、writes、驗收等其他欄位不能用此命令變更：
+
+```sh
+edict work amend --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-amend.json
+```
+
+`/tmp/edict-amend.json`：
+
+```json
+{"generation":1,"resources":["vite-5217"],"reason":"vite-5216 由 W-013 使用；本項與其沒有檔案重疊，改用獨立 port 以便並行"}
+```
+
+JSON 只接受 generation、resources、reason，resources 為修訂後的完整清單。以下情況拒絕且不改資料：呼叫者不是原對話、generation 與目前世代不符、項目已 Done 或已取消、Run 已取消或停用、本世代仍有在途或結果未確認的 executor 操作、本世代已有交付成果（已提交 work result 的 implementation，含已結束者）。已有成果時須以 `control cancel`／`restart` 重新授權或建立新工作項目。暫停中的項目或 Run 仍可修訂。修訂成功會清除目前方案並遞增 revision，因此原有門下核可隨之失效；舊方案的 executor 之後提交的成果只封存，不計入交付。中書須以新資源重新 `work plan`，門下重新審查後才能派工。修訂內容（原值、新值、原因、被清除的方案 digest）記錄在 `work show` 的 `history`。
+
 root 以無 work 的三次 ensure 建立平行頭領：
 
 ```sh
@@ -86,6 +104,14 @@ edict work plan --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
 
 保存回傳的 `digest`、`revision` 與 generation。dependencies 使用工作項目 ID，需等相依項目 Done 才派工；不是原生 Task ID。共同介面由指定負責者提出，不讓多位作者各自假定。
 
+方案的 description 必須包含「並行分析」：先 `work show` 列出所有在途或排隊（未 Done、未取消）的其他項目，逐項比對本方案的 reads、writes、resources 與 dependencies，對每一項寫出「可並行」或「需排隊」及具體原因，例如「W-013 寫入 src/vfx，本方案只讀寫 src/growth，資源不同，可並行」或「W-014 寫入 src/codex，本方案讀取 src/codex，需排隊」。判斷基準：
+
+- 任一方寫入的路徑與另一方讀取或寫入的路徑重疊，需排隊。
+- 唯一衝突是共用的工具資源（例如同一個 dev server port），而檔案範圍沒有重疊時，不排隊；改提出不同的資源名稱（例如 vite-5217）。該資源不在需求授權內時，以原生 ask 請 root 以 `work amend` 修訂需求資源，再提交方案。
+- dependencies 只列真正需要前一項成果的項目；能獨立驗收的項目不列為相依。
+
+寬的讀取範圍同樣會占用：讀取整個 `src` 的委派會阻擋其他項目對 `src` 底下任何路徑的寫入，反之亦然。方案及後續 delegate 都應宣告實際需要的最窄 reads／writes，不以 `src` 或 `*` 代替具體目錄。工具拒絕派工時會列出衝突的工作 ID、角色／職位、operation ID 與衝突維度（共用工具資源，或寫入/寫入、寫入/讀取、讀取/寫入的宣告範圍），據此調整範圍或改為排隊。
+
 中書用 `/tmp/edict-head-work.json` 授予既有門下 scope；該檔也供核可後授予尚書使用：
 
 ```json
@@ -119,6 +145,8 @@ ensure 的既有成員回應只是授權 scope，不會自動喚醒；必須另�
 ```sh
 edict review record --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-plan-review.json
 ```
+
+門下審查必須核對中書的並行分析：在途及排隊項目是否列齊、每個「可並行」結論是否確實沒有讀寫重疊、每個「需排隊」是否有實際重疊或真正相依，以及只因共用工具資源而排隊時是否已提出不同資源名稱。缺少或有誤即退回，不以「保守排隊」代替分析。
 
 `verdict` 只接受 approved／rejected。證據必須是有內容依據且可讀取的實際檔案；工具保存其內容摘要。`digest` 指方案或成果的回傳摘要，不是證據檔摘要，也不是自行填寫的版本號。證據檔或方案變更後不可沿用舊放行。
 

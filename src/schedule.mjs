@@ -2,7 +2,7 @@ import path from 'node:path';
 import { ROLES } from './roles.mjs';
 import { dispatchArgs, orcaCommand, runOrca, runOrcaAsync } from './orca.mjs';
 import { requireActive, taskBinding, recordDispatch, saveDispatchReceipt } from './session.mjs';
-import { geometry, rangeOverlap } from './ranges.mjs';
+import { geometry, rangeOverlap, overlapDetails } from './ranges.mjs';
 
 function paths(value, fallback) {
   const list=value ?? fallback;
@@ -48,6 +48,13 @@ function taskRows(result) {
   if (!data.ok||!Array.isArray(data.result?.tasks)) throw new Error('Orca Task 查詢格式不正確；未派工');
   return data.result.tasks;
 }
+function conflictDetail(item,running,known) {
+  return running.map((row,index)=>{
+    const other=known[index];
+    if (!other) return `Task ${row.id}（未在派工檔宣告範圍，保守視為重疊）`;
+    return conflict(item,other)?`Task ${row.id}（${overlapDetails(item,other,'執行中').join('；')}）`:null;
+  }).filter(Boolean).join('；');
+}
 export function selectReady(tasks,all,ready,limit) {
   const native=new Map(all.map(row=>[row.id,row]));
   const eligible=new Set(ready.map(row=>row.id));
@@ -61,8 +68,8 @@ export function selectReady(tasks,all,ready,limit) {
     else if (!['ready','pending'].includes(row.status)) reason=`Task 已不在可啟動狀態（${row.status}）`;
     else if (!eligible.has(item.task)) reason=`Orca 尚未就緒（${row.status}）`;
     else if (running.length+selected.length>=limit) reason='目前 Run 已達本次併發上限';
-    else if (knownRunning.some(other=>other?conflict(item,other):true)) reason='與執行中工作的讀寫範圍可能衝突';
-    else if (selected.some(other=>conflict(item,other))) reason='與本批工作有讀寫相依，暫緩';
+    else if (knownRunning.some(other=>other?conflict(item,other):true)) reason=`與執行中工作的讀寫範圍可能衝突：${conflictDetail(item,running,knownRunning)}`;
+    else if (selected.some(other=>conflict(item,other))) reason=`與本批工作有讀寫相依，暫緩：${selected.filter(other=>conflict(item,other)).map(other=>`Task ${other.task}（${overlapDetails(item,other,'同批').join('；')}）`).join('；')}`;
     if (reason) held.push({taskId:item.task,reason}); else selected.push(item);
   }
   return {selected,held};

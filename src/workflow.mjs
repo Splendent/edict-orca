@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { home, readSession, requireActive, atomicJSON, writeSession } from './session.mjs';
 import { ROLES, workerSpec } from './roles.mjs';
 import { resolveSettings } from './config.mjs';
-import { geometry, rangeOverlap } from './ranges.mjs';
+import { geometry, overlapDetails } from './ranges.mjs';
 import { NativeRuntime } from './native.mjs';
 
 const departments = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
@@ -171,11 +171,23 @@ function validEvidence(rows) {
 function outstanding(run, item) {
   return Object.values(run.operations).filter(x => (!item || x.work === item.id && x.generation === item.generation) && ['submitted', 'unknown', 'accepted'].includes(x.state));
 }
+function resourceConflict(mine, theirs) {
+  if (!mine.length || !theirs.length) return null;
+  if (theirs.includes('*')) return `在途操作宣告資源 *，與所有工具資源互斥（本次資源 ${mine.join(', ')}）`;
+  if (mine.includes('*')) return `本次宣告資源 *，與所有工具資源互斥（在途資源 ${theirs.join(', ')}）`;
+  const shared = mine.filter(x => theirs.includes(x));
+  return shared.length ? `共用工具資源 ${shared.join(', ')}` : null;
+}
 function claim(db, candidate, ignoreMember) {
   const active = Object.values(db.runs).flatMap(r => outstanding(r)).filter(x => x.memberId !== ignoreMember);
   const executors = new Set(active.filter(x => x.position === 'executor').map(x => x.memberId));
   if (candidate.position === 'executor' && executors.size >= 3 || new Set(active.map(x => x.memberId)).size >= 16) fail('目前派工資源已滿；沒有建立新代理');
-  if (active.some(x => candidate.resources.length && x.resources.length && (candidate.resources.includes('*') || x.resources.includes('*') || candidate.resources.some(y => x.resources.includes(y))) || rangeOverlap(candidate.physicalWrites, x.physicalWrites) || rangeOverlap(candidate.physicalWrites, x.physicalReads) || rangeOverlap(candidate.physicalReads, x.physicalWrites))) fail('與在途工作的檔案或工具範圍衝突');
+  const conflicts = active.map(op => {
+    const resource = resourceConflict(candidate.resources, op.resources || []);
+    const reasons = [...(resource ? [resource] : []), ...overlapDetails(candidate, op)];
+    return reasons.length ? `${op.runId && op.runId !== candidate.runId ? `Run ${op.runId} ` : ''}${op.work || '無工作項目'} ${op.role}/${op.position} 操作 ${op.id}（${reasons.join('；')}）` : null;
+  }).filter(Boolean);
+  if (conflicts.length) fail(`與在途工作的檔案或工具範圍衝突：${conflicts.slice(0, 3).join('；')}${conflicts.length > 3 ? `；另有 ${conflicts.length - 3} 項` : ''}。若無實際重疊，改宣告較窄的 reads／writes 或不同的資源名稱／工作樹`);
 }
 function requiredOperations(run, item) {
   return Object.values(run.operations).filter(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && !x.supersededBy && !['owner-required', 'forwarded'].includes(x.state));
@@ -271,6 +283,30 @@ export class Workflow {
       run.items[id] = item; return item;
     });
   }
+  // Root-only requirement amendment of an item's tool resources. Any current plan is cleared because a plan's
+  // resources must stay within the requirement; Zhongshu resubmits and Menxia re-reviews before new delegation.
+  amend(runId, work, data) {
+    return this.mutate(runId, (run, actor, db) => {
+      if (actor.id !== 'root') fail('只有原對話（原協調者）可以修訂需求資源');
+      if (!data || typeof data !== 'object' || Array.isArray(data)) fail('需求修訂輸入必須是 JSON 物件，含 generation、resources、reason');
+      const extra = Object.keys(data).filter(key => !['generation', 'resources', 'reason'].includes(key));
+      if (extra.length) fail(`需求修訂只接受 generation、resources、reason；不接受 ${extra.join(', ')}`);
+      const item = itemFor(run, work);
+      if (item.done || item.cancelled || run.cancelled || run.enabled === false) fail('工作已結案、取消或停用；需求資源修訂沒有套用');
+      generationFor(item, data.generation);
+      const resources = list(data.resources, 'resources'), reason = text(data.reason, 'reason');
+      if (outstanding(run, item).some(x => x.position === 'executor')) fail('本世代仍有在途或未確認的執行代理操作；先 sync 或等其收斂再修訂資源');
+      // Clearing the plan would orphan a delivered result (closure only counts the new revision), so refuse instead.
+      if (item.result || Object.values(run.operations).some(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && x.result)) fail('本世代已有交付成果；修訂資源會使已完成成果失效。請以 control cancel／restart 重新授權，或建立新工作項目');
+      const previous = item.resources, clearedPlan = item.plan ? { revision: item.plan.revision, digest: item.plan.digest } : null;
+      item.resources = resources;
+      // Bump the revision with the cleared plan so stale same-revision executors take the archived-only result path.
+      if (item.plan) { item.plan = null; item.result = null; item.revision++; }
+      const record = { action: 'amend', work, generation: item.generation, field: 'resources', from: previous, to: resources, reason, clearedPlan, sequence: ++db.sequence, actor: actor.id, at: new Date().toISOString() };
+      run.history.push(record);
+      return { item, amendment: record, next: clearedPlan ? '方案與核可已清除；中書須以新資源重新提交方案並由門下重新審查' : '中書提交方案時可宣告新資源' };
+    });
+  }
   plan(runId, work, data) {
     return this.mutate(runId, (run, actor) => {
       roleIs(actor, 'zhongshu'); isHead(actor); const item = itemFor(run, work); controlAllowed(run, item);
@@ -358,7 +394,7 @@ export class Workflow {
       if (!['current', 'new-child'].includes(worktree) && !worktree.startsWith('path:')) fail('工作樹必須為 current、new-child 或既有 path');
       const root = worktree === 'current' ? run.project : worktree.startsWith('path:') ? worktree.slice(5) : null;
       const shape = { physicalReads: geometry(root, reads), physicalWrites: geometry(root, writes) };
-      claim(db, { position, resources, ...shape });
+      claim(db, { runId, position, reads, writes, resources, ...shape });
       const member = { id: randomUUID(), role, position, title: position === 'head' ? ROLES[role].head : ROLES[role].executor,
         supervisor: actor.id, scopes: role === 'zhongshu' && position === 'head' ? ['*'] : work ? [work] : [], dispatches: [], dispatchId: null, generation: 1 };
       const session = requireActive(this.session), settings = resolveSettings(session.config, role, position);
@@ -509,7 +545,7 @@ export class Workflow {
       if (target.position === 'executor' && previous.state !== 'settled') fail('實作代理仍在執行；先處理其原生回報並 sync，再續辦有界修正');
       if (Object.values(run.operations).some(x => x.memberId === target.id && ['unknown', 'submitted'].includes(x.state))) fail('目標仍有未確認操作，不能再次傳送');
       const claims = target.position === 'executor' ? previous : { reads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
-      claim(db, { ...claims, position: target.position }, target.id);
+      claim(db, { ...claims, runId, position: target.position }, target.id);
       const record = { id: randomUUID(), requestId: randomUUID(), kind, from: source.id, to: targetId, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0, body: text(body, 'body'), forwardOf: forwardId || null, state: 'submitted', sequence: ++db.sequence };
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
