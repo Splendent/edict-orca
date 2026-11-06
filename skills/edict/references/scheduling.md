@@ -14,6 +14,8 @@ root 先用 run open 建立 Run，再以無 work 的 team ensure 建立中書、
 
 同工作樹互不衝突的讀寫可並行；讀與寫、寫與寫重疊或工具互斥需等待。未知範圍保守限制。範圍檢查涵蓋實體路徑、目錄與連結，不是 OS 存取沙箱；不得藉更換連結越出授權。
 
+extraReads 宣告的其他工作樹讀取範圍與專案 reads 一起占用，以實體路徑和其他工作樹的在途寫入比對；跨工作樹只開放讀取，寫入仍限委派自身的工作樹。commit、merge 等寫入 git 中繼資料的委派必須宣告 `git:<common dir>` 資源（以 `git rev-parse --path-format=absolute --git-common-dir` 取得）；同一 repo 的各工作樹共用 common dir，因此這類操作彼此排隊。未宣告該資源的委派不得 commit 或 merge。
+
 ## 工作樹
 
 派工 worktree 放在 JSON，不是 delegate 的 shell flag。
@@ -22,7 +24,7 @@ root 先用 run open 建立 Run，再以無 work 的 team ensure 建立中書、
 | --- | --- | --- |
 | current | 預設，沿用呼叫者原生工作樹 | 單一專案基準可核對；不衝突才並行 |
 | new-child | 由 Orca 建立子工作樹 | 真正需要隔離時使用；原生支援仍須確認 |
-| path:/絕對路徑 | 已存在的工作樹 | 已取得授權且可核對前置成果與實際位置 |
+| path:/絕對路徑 | 已存在的工作樹 | 已取得授權且可核對前置成果與實際位置；只讀另一工作樹時用 extraReads，不需切換 worktree |
 
 本入口不提供 new-top-level、repo、base-branch 或獨立的 Task DAG 編輯。不可照舊 CLI 範例傳這些旗標，也不為隔離擅自 git init 或建立頂層工作樹。新工作樹未必包含未 commit 成果，須提供可核對基準；本實作成果索引以 Run 專案及操作成果目錄核對，跨工作樹交付未全測。需要隔離時先確認其實際交付路徑能符合此限制，不把不支援情境宣稱可用。
 
