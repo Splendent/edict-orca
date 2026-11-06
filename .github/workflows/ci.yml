@@ -30,14 +30,14 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
+      - name: Check source, test and script syntax
+        run: npm run check
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
       - name: Test
         env:
           EDICT_HOME: ${{ runner.temp }}/edict-ci-state
         run: npm test
-      - name: Check syntax
-        run: npm run check
 
   update-windows:
     name: Windows updater / Node 24
@@ -54,11 +54,11 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Check source, test and script syntax
+        run: npm run check
       - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
       - name: Test updater with local Git fixtures
         env:
           EDICT_HOME: ${{ runner.temp }}/edict-ci-state
         run: node --test test/update.test.mjs
-      - name: Check syntax
-        run: npm run check
