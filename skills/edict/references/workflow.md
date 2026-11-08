@@ -132,6 +132,24 @@ edict work plan --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001
 
 寬的讀取範圍同樣會占用：讀取整個 `src` 的委派會阻擋其他項目對 `src` 底下任何路徑的寫入，反之亦然。方案及後續 delegate 都應宣告實際需要的最窄 reads／writes，不以 `src` 或 `*` 代替具體目錄。工具拒絕派工時會列出衝突的工作 ID、角色／職位、operation ID 與衝突維度（共用工具資源，或寫入/寫入、寫入/讀取、讀取/寫入的宣告範圍），據此調整範圍或改為排隊。
 
+多位 executor 把輸出寫在同一目錄時（例如各自寫 `docs/research/` 下的不同檔案），任何一位讀取整個 `docs/research` 都會阻擋其他人在該目錄內的寫入，結果只能依序執行。這類委派的 reads 列出實際要讀的既有檔案，不列整個輸出目錄；確實需要讀取另一位的成果時，改為相依並排隊。衝突訊息出現「讀取目錄 … 涵蓋另一方在該目錄內的寫入」即是這種情況。
+
+方案的 description 還必須包含「分工表」，說明單一項目內部如何拆給 executor：
+
+| 欄位 | 內容 |
+| --- | --- |
+| 子工作 | 可獨立交付及驗收的一份輸出，例如一個章節檔、一個候選框架的評估、一個模組 |
+| 部門 | 負責的六部 |
+| writes／reads | 該 executor 實際寫入及讀取的最窄範圍，彼此寫入不重疊 |
+| 並行 | 「可並行」或「需排隊」及原因（相依哪個子工作或哪段讀寫重疊） |
+
+判斷基準：
+
+- 輸出可拆成互不重疊的檔案或模組，且能分別驗收時，拆給不同 executor；同一份檔案只能有一位作者。
+- 只派一位 executor 時，分工表寫明理由，例如輸出是單一檔案且各段互相引用、總量小到拆分的整合成本高於平行節省的時間。
+- 需要合併多份輸出時，另列一個整合子工作，相依所有被合併的子工作。
+- 目前共用 EDICT_HOME 同時最多 3 位 executor；超過時分工表標示批次順序，不因名額而合併成單一作者。
+
 中書用 `/tmp/edict-head-work.json` 授予既有門下 scope；該檔也供核可後授予尚書使用：
 
 ```json
@@ -166,7 +184,7 @@ ensure 的既有成員回應只是授權 scope，不會自動喚醒；必須另�
 edict review record --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-plan-review.json
 ```
 
-門下審查必須核對中書的並行分析：在途及排隊項目是否列齊、每個「可並行」結論是否確實沒有讀寫重疊、每個「需排隊」是否有實際重疊或真正相依，以及只因共用工具資源而排隊時是否已提出不同資源名稱。缺少或有誤即退回，不以「保守排隊」代替分析。
+門下審查必須核對中書的並行分析：在途及排隊項目是否列齊、每個「可並行」結論是否確實沒有讀寫重疊、每個「需排隊」是否有實際重疊或真正相依，以及只因共用工具資源而排隊時是否已提出不同資源名稱。缺少或有誤即退回，不以「保守排隊」代替分析。分工表同樣是審查項目：可拆成獨立輸出的工作卻只派一位 executor 且沒有理由、子工作寫入重疊、或 reads 包含其他子工作的輸出目錄而造成不必要的排隊時，退回中書修正。
 
 `verdict` 只接受 approved／rejected。證據必須是有內容依據且可讀取的實際檔案；工具保存其內容摘要。`digest` 指方案或成果的回傳摘要，不是證據檔摘要，也不是自行填寫的版本號。證據檔或方案變更後不可沿用舊放行。
 
@@ -211,7 +229,9 @@ edict team ensure xingbu --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --w
 edict delegate bingbu --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-implementation.json
 ```
 
-保存回傳 `operation.id`；執行代理應從前言及 work show 核對自己的委派。planning 只屬中書 executor；plan-review／verification 屬門下；coordination 屬尚書；部門 executor 使用 implementation 或 verification。verification 及管理角色沒有專案寫入授權；中書、門下與尚書不能用 implementation 冒充交付。
+保存回傳 `operation.id`；執行代理應從前言及 work show 核對自己的委派。
+
+尚書依方案分工表把子工作交給對應部門，部門頭領為每個標示「可並行」的子工作各 `delegate` 一位 executor，同一輪全部送出後再結束當輪，不等前一位完成才派下一位；每份委派的 title、reads、writes 取自分工表該列。「需排隊」的子工作在其相依完成或衝突解除後再派。工具因名額已滿拒絕時，等在途 executor 結束後派下一批，不把剩餘子工作併給已在執行的 executor。planning 只屬中書 executor；plan-review／verification 屬門下；coordination 屬尚書；部門 executor 使用 implementation 或 verification。verification 及管理角色沒有專案寫入授權；中書、門下與尚書不能用 implementation 冒充交付。
 
 ## 成員換手（team replace）
 

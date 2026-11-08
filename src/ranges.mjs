@@ -75,6 +75,11 @@ export function rangeOverlap(a,b) {
 const rootName=root=>String(root).replaceAll('\\','/').replace(/\/$/,'');
 // Declared reads plus cross-root reads shown as <absolute root>/<range>.
 const declaredReads=x=>[...(x.reads||[]),...(x.extraReads||[]).flatMap(e=>e.reads.map(r=>`${rootName(e.root)}/${r}`))];
+const relName=name=>String(name).replaceAll('\\','/').replace(/^\.\//,'').replace(/\/+$/,'');
+// Declared project reads that are strict ancestor directories of a declared write.
+function coveringReads(reads,writes) {
+  return (reads||[]).filter(dir=>dir!=='*'&&(writes||[]).some(file=>relName(file).startsWith(relName(dir)+'/')));
+}
 export function overlapDetails(candidate,other,label='在途') {
   const show=names=>names?.length?names.join(', '):'（未宣告）';
   const rows=[];let conservative=false;
@@ -85,7 +90,13 @@ export function overlapDetails(candidate,other,label='在途') {
     if (a?.unknown||b?.unknown) conservative=true;
   };
   check(candidate.physicalWrites,other.physicalWrites,`寫入/寫入：本次寫入 ${show(candidate.writes)}，${label}寫入 ${show(other.writes)}`);
+  const before=rows.length;
   check(candidate.physicalWrites,other.physicalReads,`寫入/讀取：本次寫入 ${show(candidate.writes)}，${label}讀取 ${show(declaredReads(other))}`);
+  const writeRead=rows.length>before;
   check(candidate.physicalReads,other.physicalWrites,`讀取/寫入：本次讀取 ${show(declaredReads(candidate))}，${label}寫入 ${show(other.writes)}`);
+  const readWrite=rows.length>before+(writeRead?1:0);
+  // A read of a whole directory blocks every write inside it, e.g. sibling output files in one shared folder.
+  const hints=[...(writeRead?coveringReads(other.reads,candidate.writes):[]),...(readWrite?coveringReads(candidate.reads,other.writes):[])];
+  if (hints.length) rows.push(`讀取目錄 ${[...new Set(hints)].join(', ')} 涵蓋另一方在該目錄內的寫入；若不需讀取那些輸出，雙方改列出實際要讀的檔案，不讀整個輸出目錄`);
   return conservative?[...rows,'實體範圍未確認（* 或工作樹位置未知），保守視為重疊']:rows;
 }
