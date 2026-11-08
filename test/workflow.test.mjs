@@ -219,6 +219,16 @@ test('overlap rejection names the in-flight work, operation and conflicting dime
   assert.doesNotMatch(error.message, /保守視為重疊/);
 });
 
+test('sibling outputs under a wholly read directory conflict with a hint', t => {
+  const f = fixture(t); f.launch('W-001', { reads: ['src'], writes: ['src/a.txt'] });
+  assert.throws(() => f.launch('W-001', { reads: ['src'], writes: ['src/b.txt'] }), /讀取目錄 src 涵蓋另一方在該目錄內的寫入；若不需讀取那些輸出，雙方改列出實際要讀的檔案/);
+});
+
+test('sibling outputs with file-level reads run in parallel', t => {
+  const f = fixture(t); f.launch('W-001', { reads: ['src/input.txt'], writes: ['src/a.txt'] });
+  assert.equal(f.launch('W-001', { reads: ['src/input.txt'], writes: ['src/b.txt'] }).confirmed, true);
+});
+
 test('shared tool resources are named; distinct resources and disjoint paths run in parallel', t => {
   const f = fixture(t);
   f.root(); f.w.add('run-test', { id: 'W-002', title: 'VFX', requirement: 'Implement VFX', reads: ['src/vfx'], writes: ['src/vfx'], resources: ['vite-5216'], acceptance: ['Check'] });
