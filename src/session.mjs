@@ -4,6 +4,7 @@ import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { validateConfig } from './config.mjs';
+import { TAIZI_DUTY } from './roles.mjs';
 const validId=value=>typeof value==='string'&&value.trim().length>0;
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -108,7 +109,7 @@ export function activate(id, config, project, options = {}) {
   const state = { version: 2, session: id, active, coordinator, modeConfirmed,
     pending: active ? null : 'cursor-custom-mode', project: path.resolve(project), config,
     revision: previous?.revision ?? 0, runId: previous?.runId ?? null, dispatches: previous?.dispatches ?? [],
-    tasks: previous?.tasks ?? [], continuations: previous?.continuations ?? [], initializedAt: previous?.initializedAt ?? new Date().toISOString() };
+    tasks: previous?.tasks ?? [], continuations: previous?.continuations ?? [], handoffs: previous?.handoffs ?? [], initializedAt: previous?.initializedAt ?? new Date().toISOString() };
   writeSession(state);
   return state;
 }
@@ -130,8 +131,9 @@ export function context(id) {
   return `[Edict 對話模式已啟用]\n本次身分：${id}\n` +
     `使用者已在此對話執行 init；後續正常交代工作即使用 Edict，不要求重複命令。一般問答直接回答。此模式由對話中的指令延續，沒有 hook 或背景載入程序。\n` +
     `執行工作前讀取 ${JSON.stringify(skill)}，按規劃→獨立審查→派工→驗收流程，實際通訊使用 Orca。\n` +
-    `CLI 每次指定 --session ${JSON.stringify(id)}；不得改用別的對話、專案或終端機ID。設定：${JSON.stringify(state.config.roles)}\n` +
-    `目前 Run：${state.runId ?? '尚未建立'}；派工紀錄：${JSON.stringify(state.dispatches)}\n` +
+    `${TAIZI_DUTY}\n` +
+    `CLI 每次指定 --session ${JSON.stringify(id)}；不得改用別的專案或終端機ID。只有經 edict handoff accept 接手的對話可沿用此 ID。設定：${JSON.stringify(state.config.roles)}\n` +
+    `目前 Run：${state.runId ?? '尚未建立'}；交棒紀錄：${JSON.stringify(state.handoffs ?? [])}；派工紀錄：${JSON.stringify(state.dispatches)}\n` +
     `Task 索引：${JSON.stringify(state.tasks ?? [])}；續辦收據：${JSON.stringify(state.continuations ?? [])}。任務狀態以 Orca 為準。\n` +
     `使用者執行 /edict off 後停止套用此模式；off 不取消已派工作，需報告仍執行中的工作。\n`;
 }

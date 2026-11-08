@@ -218,6 +218,29 @@ function validEvidence(rows) {
 function outstanding(run, item) {
   return Object.values(run.operations).filter(x => (!item || x.work === item.id && x.generation === item.generation) && ['submitted', 'unknown', 'accepted'].includes(x.state));
 }
+// Orca's run-use keeps only the Run it names, so a handoff can move one open Run; every other Run of the session
+// must already be finished and quiet, and is archived when the handoff completes.
+function runSettled(run) {
+  return !outstanding(run).length && !run.messages.some(x => ['submitted', 'unknown', 'forwarding', 'owner-required'].includes(x.state)) &&
+    Object.values(run.items).every(item => item.done || item.cancelled);
+}
+function otherOpenRuns(db, session, runId) {
+  return Object.values(db.runs).filter(x => x.session === session && x.id !== runId && !x.archived && !runSettled(x)).map(x => x.id);
+}
+function handoffPending(run) {
+  return {
+    ownerRequired: run.messages.filter(x => x.state === 'owner-required').map(x => ({ messageId: x.id, from: x.from, to: x.to, work: x.work, kind: x.kind || 'handoff' })),
+    unknown: Object.values(run.operations).filter(x => x.state === 'unknown').map(x => ({ operationId: x.id, role: x.role, position: x.position, work: x.work, actorId: x.actorId })),
+    inFlight: Object.values(run.operations).filter(x => ['submitted', 'accepted'].includes(x.state)).map(x => ({ operationId: x.id, role: x.role, position: x.position, work: x.work, state: x.state, dispatchId: x.dispatchId || null })),
+  };
+}
+function handoffFor(run, packet, token) {
+  const handoff = run.handoff;
+  if (!handoff || handoff.id !== packet.id || handoff.tokenDigest !== hash(token)) fail('交棒檔已失效、已被新的交棒取代，或不屬於此 Run');
+  if (handoff.state === 'accepted') fail('此交棒已完成；不重複接手');
+  if (handoff.state === 'revoked') fail('原協調者已撤回此交棒');
+  return handoff;
+}
 function resourceConflict(mine, theirs) {
   if (!mine.length || !theirs.length) return null;
   if (theirs.includes('*')) return `在途操作宣告資源 *，與所有工具資源互斥（本次資源 ${mine.join(', ')}）`;
@@ -275,6 +298,18 @@ function finalizeReceipt(run, operationId, receipt) {
     if (!member.dispatches.includes(normalized.dispatchId)) member.dispatches.push(normalized.dispatchId);
   } else if (op.state !== 'settled') op.state = 'message-delivered';
   if (continuation && op.position === 'executor' && previous) previous.supersededBy = op.id;
+  if (op.operationKind === 'replacement' && validPair) {
+    const replaced = run.members[op.replacesMember];
+    if (replaced && !replaced.retired) {
+      replaced.retired = true; replaced.replacedBy = member.id;
+      for (const child of Object.values(run.members)) if (child.supervisor === replaced.id) child.supervisor = member.id;
+    }
+    if (op.position === 'executor' && previous) {
+      previous.supersededBy = op.id;
+      const item = run.items[op.work];
+      if (item && item.generation === op.generation && item.revision === op.revision) item.result = null;
+    }
+  }
   if (message) {
     message.state = 'delivered'; message.receipt = receipt;
     if (message.forwardOf) {
@@ -296,9 +331,88 @@ export class Workflow {
     const identity = this.runtime.identity(runId);
     return transaction(db => {
       const run = getRun(db, this.session, runId), actor = memberFor(run, identity);
+      if (run.archived) fail('此 Run 已在交棒時封存，不再接受變更；請在接手對話使用目前的 Run');
       if (active) requireActive(this.session);
       return fn(run, actor, db);
     });
+  }
+  // The current coordinator hands its root duties to another conversation. The packet carries a one-time token; the
+  // receiving conversation proves the native takeover with run-use before Edict records the new root.
+  handoffExport(runId, note) {
+    const token = randomUUID();
+    const exported = this.mutate(runId, (run, actor, db) => {
+      if (actor.id !== 'root') fail('只有目前協調此 Run 的對話可以交棒');
+      const others = otherOpenRuns(db, this.session, runId);
+      if (others.length) fail(`本對話另有未結束的 Run：${others.join(', ')}。Orca 的 run-use 只讓接手對話保留一個 Run；先完成或取消其他 Run 的工作再交棒`);
+      if (['accepting', 'unknown'].includes(run.handoff?.state)) fail('上一筆交棒的原生接手結果未確認；由接手對話以同一交棒檔再次 accept 核對，不另建交棒');
+      const at = new Date().toISOString();
+      if (run.handoff?.state === 'pending') run.history.push({ action: 'handoff-replaced', id: run.handoff.id, sequence: ++db.sequence, actor: actor.id, at });
+      run.handoff = { id: randomUUID(), tokenDigest: hash(token), state: 'pending', note: note === undefined ? null : text(note, 'note'), createdAt: at };
+      run.history.push({ action: 'handoff-export', id: run.handoff.id, sequence: ++db.sequence, actor: actor.id, at });
+      const view = this.view(run);
+      return { handoff: run.handoff, objective: db.intents && Object.values(db.intents).find(x => x.runId === runId)?.objective || null,
+        items: view.items.map(x => ({ id: x.id, title: x.title, status: x.status, generation: x.generation })),
+        heads: Object.values(run.members).filter(x => x.position === 'head' && !x.retired).map(x => ({ role: x.role, memberId: x.id, dispatchId: x.dispatchId, scopes: x.scopes })),
+        pending: handoffPending(run), project: run.project };
+    });
+    return { kind: 'edict-handoff', version: 1, id: exported.handoff.id, token, session: this.session, edictHome: path.resolve(home()), runId,
+      createdAt: exported.handoff.createdAt, note: exported.handoff.note, objective: exported.objective, project: exported.project,
+      items: exported.items, heads: exported.heads, pending: exported.pending };
+  }
+  handoffCancel(runId) {
+    return this.mutate(runId, (run, actor, db) => {
+      if (actor.id !== 'root') fail('只有目前協調此 Run 的對話可以撤回交棒');
+      if (run.handoff?.state !== 'pending') fail(run.handoff && ['accepting', 'unknown'].includes(run.handoff.state) ? '接手對話已送出原生接手，結果未確認；不能撤回' : '沒有待接手的交棒');
+      run.handoff.state = 'revoked'; run.handoff.revokedAt = new Date().toISOString();
+      run.history.push({ action: 'handoff-revoked', id: run.handoff.id, sequence: ++db.sequence, actor: actor.id, at: run.handoff.revokedAt });
+      return { handoff: run.handoff };
+    }, { active: false });
+  }
+  handoffAccept(packet) {
+    if (!packet || packet.kind !== 'edict-handoff' || packet.version !== 1 || packet.session !== this.session) fail('交棒檔格式不正確或不屬於此 Edict 對話身分');
+    const runId = text(packet.runId, 'runId'), token = text(packet.token, 'token');
+    requireActive(this.session);
+    handoffFor(this.run(runId), packet, token);
+    let before = null;
+    try { before = this.runtime.identity(runId); } catch { /* An unbound conversation is the expected receiver. */ }
+    if (before?.owner) fail('目前對話已是此 Run 的協調者；交棒須由另一個對話接手');
+    if (before) fail('執行代理不能接手協調者職責');
+    const current = this.runtime.currentRun();
+    if (current && current !== runId) fail(`此對話正在協調 Run ${current}；Orca run-use 會解除該綁定。請在尚未協調任何 Run 的對話接手`);
+    const requestId = transaction(db => {
+      const run = getRun(db, this.session, runId), handoff = handoffFor(run, packet, token);
+      const others = otherOpenRuns(db, this.session, runId);
+      if (others.length) fail(`本對話另有未結束的 Run：${others.join(', ')}；交棒沒有套用`);
+      // A retried accept reuses the request ID so Orca deduplicates the takeover instead of applying it twice.
+      handoff.requestId ??= randomUUID(); handoff.state = 'accepting'; handoff.acceptingAt = new Date().toISOString();
+      return handoff.requestId;
+    });
+    let receipt, owner = false;
+    try { receipt = this.runtime.takeover(runId, requestId); owner = this.runtime.identity(runId).owner === true; }
+    catch (error) {
+      transaction(db => { const handoff = getRun(db, this.session, runId).handoff; handoff.state = 'unknown'; handoff.error = error.message; handoff.rawReceipt = error.receipt || null; });
+      throw error;
+    }
+    if (!owner) {
+      transaction(db => { const handoff = getRun(db, this.session, runId).handoff; handoff.state = 'unknown'; handoff.error = 'run-use 後仍未確認目前對話是此 Run 的協調者'; });
+      fail('Orca 未確認接手；保留交棒紀錄，以同一交棒檔再次 accept 核對，不另建交棒');
+    }
+    let coordinator = null;
+    try { coordinator = this.runtime.coordinator(runId); } catch { /* The binding is already proven by identity. */ }
+    const accepted = transaction(db => {
+      const run = getRun(db, this.session, runId), handoff = run.handoff, at = new Date().toISOString();
+      Object.assign(handoff, { state: 'accepted', acceptedAt: at, coordinator, receipt, error: null });
+      const archived = Object.values(db.runs).filter(x => x.session === this.session && x.id !== runId && !x.archived && runSettled(x));
+      for (const other of archived) other.archived = { handoff: handoff.id, at };
+      run.history.push({ action: 'handoff-accept', id: handoff.id, coordinator, archivedRuns: archived.map(x => x.id), sequence: ++db.sequence, actor: 'root', at });
+      return { handoff, archivedRuns: archived.map(x => x.id), pending: handoffPending(run) };
+    });
+    const session = readSession(this.session);
+    session.runId = runId;
+    session.handoffs = [...(session.handoffs || []), { id: accepted.handoff.id, runId, acceptedAt: accepted.handoff.acceptedAt, coordinator }];
+    let sessionIndexError = null;
+    try { writeSession(session); } catch (error) { sessionIndexError = error.message; }
+    return { ...accepted, runId, session: this.session, sessionIndexError };
   }
   open(objective) {
     assertWorkflowOwner(this.session, this.runtime);
@@ -473,8 +587,53 @@ export class Workflow {
   launch(runId, role, position, work, data) {
     const prepared = this.prepare(runId, role, position, work, data);
     if (prepared.existing) return { ...prepared, member: prepared.existing };
+    return this.startPrepared(runId, prepared);
+  }
+  // A supervisor hands a settled member's assignment to a new native worker that uses the current role settings,
+  // for example after config set switched the agent or model, or when the member's context is exhausted.
+  replace(runId, memberId, data) {
+    const prepared = this.mutate(runId, (run, actor, db) => {
+      isHead(actor);
+      const target = run.members[memberId];
+      if (!target || target.id === 'root' || !['head', 'executor'].includes(target.position)) fail('找不到可換手的團隊成員');
+      if (target.retired) fail('此成員已停用或已被換手');
+      if (target.supervisor !== actor.id) fail('只有此成員的直接上級可以換手');
+      if (!target.dispatchId) fail('此成員尚未取得原生 Dispatch；先 recover 原操作');
+      if (Object.values(run.operations).some(x => x.memberId === target.id && ['submitted', 'unknown', 'accepted'].includes(x.state))) fail('原成員仍在執行或結果未確認；等它回報結束並 sync 後再換手，不同時保留兩位執行者');
+      if (Object.values(run.operations).some(x => x.actorId === target.id && ['submitted', 'unknown'].includes(x.state))) fail('原成員發起的操作結果未確認；須由原成員 recover 後再換手');
+      if (run.messages.some(x => x.from === target.id && ['submitted', 'unknown', 'forwarding', 'owner-required'].includes(x.state))) fail('原成員的交接訊息尚未送達或待 owner 轉交；先處理後再換手');
+      const previous = Object.values(run.operations).findLast(x => x.memberId === target.id && x.state === 'settled');
+      const work = target.position === 'executor' ? previous?.work : null;
+      const item = work ? itemFor(run, work) : null;
+      controlAllowed(run, item);
+      if (target.position === 'executor') {
+        if (!previous || !item) fail('找不到原執行代理已結束的委派');
+        generationFor(item, data.generation);
+        if (previous.generation !== item.generation || previous.revision !== item.revision) fail('換手不能跨工作世代或已變更方案；須建立新的明確委派');
+        if (!['zhongshu', 'menxia'].includes(target.role) && !approval(run, item)) fail('缺少門下對目前方案的正式核可');
+        if ((item.plan?.dependencies || []).some(id => !run.items[id].done)) fail('前置工作尚未結案；未送出原生派工');
+      }
+      const scope = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], worktree: 'current', root: run.project, physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
+      claim(db, { runId, position: target.position, reads: scope.reads, extraReads: scope.extraReads || [], writes: scope.writes, resources: scope.resources, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites }, target.id);
+      const session = requireActive(this.session), settings = resolveSettings(session.config, target.role, target.position);
+      const member = { id: randomUUID(), role: target.role, position: target.position, title: target.title, supervisor: target.supervisor,
+        scopes: [...target.scopes], dispatches: [], dispatchId: null, generation: 1, replaces: target.id };
+      const handover = `接手說明：你接替成員 ${target.id}（${target.title}）的${work ? ` ${work} ` : ''}職務；原成員已結束並將停用。先讀 work show 中原成員的 operations、messages 與 decisions 了解進度，再依本角色指引繼續。`;
+      const op = { id: randomUUID(), requestId: randomUUID(), memberId: member.id, actorId: actor.id, role: target.role, position: target.position, runId, work,
+        generation: item?.generation || 0, revision: item?.revision || 0, writes: scope.writes, reads: scope.reads, extraReads: scope.extraReads || [], resources: scope.resources,
+        worktree: scope.worktree, root: scope.root, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites, settings, state: 'submitted', sequence: ++db.sequence,
+        spec: `${text(data.spec, 'spec')}\n\n${handover}`, title: previous?.title || null, phase: target.position === 'head' ? 'coordination' : previous.phase,
+        operationKind: 'replacement', replacesMember: target.id, supersedes: previous?.id || null, replaces: null, planDigest: item?.plan?.digest || null, controlRevision: run.controlRevision };
+      run.members[member.id] = member; run.operations[op.id] = op;
+      if (op.phase === 'implementation') item.authors.push(member.id);
+      run.history.push({ action: 'replace', member: target.id, by: member.id, operation: op.id, settings, sequence: db.sequence, actor: actor.id, at: new Date().toISOString() });
+      return { operation: op, member };
+    });
+    return this.startPrepared(runId, prepared);
+  }
+  startPrepared(runId, prepared) {
     const op = prepared.operation;
-    const spec = workerSpec(role, op.spec, this.run(runId).project, { position, session: this.session, runId, memberId: op.memberId, work, phase: op.phase, stateHome: home() });
+    const spec = workerSpec(op.role, op.spec, this.run(runId).project, { position: op.position, session: this.session, runId, memberId: op.memberId, work: op.work || undefined, phase: op.phase, stateHome: home() });
     let receipt;
     try { receipt = this.runtime.start(runId, op.settings, spec, { worktree: op.worktree, title: memberSummary(this.run(runId), prepared.member).label }, op.requestId); }
     catch (error) {
@@ -584,6 +743,7 @@ export class Workflow {
     const prepared = this.mutate(runId, (run, actor, db) => {
       isHead(actor); const target = run.members[targetId];
       if (!target?.dispatchId) fail('目標成員尚未取得原生 Dispatch');
+      if (target.retired) fail(target.replacedBy ? `目標成員已換手給 ${target.replacedBy}；改送新成員` : '目標成員已停用');
       const item = work ? itemFor(run, work) : null;
       if (kind === 'handoff') controlAllowed(run, item);
       if (kind === 'report' && target.position !== 'head') fail('只讀回報只能送既有頭領，不能啟動執行工作');
@@ -725,7 +885,8 @@ export class Workflow {
 }
 
 export function assertWorkflowOwner(session, runtime = new NativeRuntime()) {
-  const runs = Object.values(readDb().runs).filter(x => x.session === session);
+  // Runs archived by a handoff stay bound to the previous conversation in Orca and accept no changes.
+  const runs = Object.values(readDb().runs).filter(x => x.session === session && !x.archived);
   for (const run of runs) if (!runtime.identity(run.id).owner) fail('只有此 Run 原協調者可以啟用或停用');
   return runs;
 }
@@ -733,11 +894,12 @@ export function assertWorkflowOwner(session, runtime = new NativeRuntime()) {
 export function setWorkflowEnabled(session, enabled, runtime = new NativeRuntime()) {
   const runs = assertWorkflowOwner(session, runtime);
   if (!runs.length) return;
-  transaction(db => { for (const run of Object.values(db.runs)) if (run.session === session) { run.enabled = enabled; run.controlRevision++; } });
+  transaction(db => { for (const run of Object.values(db.runs)) if (run.session === session && !run.archived) { run.enabled = enabled; run.controlRevision++; } });
 }
 
 export function workflowStatus(session) {
   return Object.values(readDb().runs).filter(x => x.session === session).map(x => ({ runId: x.id, paused: x.paused, cancelled: x.cancelled,
+    archived: x.archived || null, handoff: x.handoff ? { id: x.handoff.id, state: x.handoff.state, createdAt: x.handoff.createdAt, acceptedAt: x.handoff.acceptedAt || null } : null,
     teams: Object.values(x.members).filter(m => m.position === 'head').map(m => ({ role: m.role, memberId: m.id, dispatchId: m.dispatchId })),
     hierarchy: hierarchy(x),
     items: Object.values(x.items).map(i => ({ id: i.id, title: i.title, done: i.done, paused: i.paused, cancelled: i.cancelled, generation: i.generation })) }));

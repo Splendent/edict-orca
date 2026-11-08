@@ -142,6 +142,7 @@ node bin/edict.mjs --version
 | `/edict config` | 修改此對話未來派工的角色或職位設定 |
 | `/edict off` | 關閉新派工與推進，保留資料，不自動取消現有代理 |
 | `/edict update` | 手動更新共用安裝並由本對話重讀指引 |
+| `/edict handoff` | 產生交棒檔，把太子職責交給另一個對話；接手對話執行 `/edict handoff accept <交棒檔>` |
 | `/edict help` | 顯示說明，不啟用 |
 
 Codex 將 `/edict` 換成 `$edict`。安裝、引用範例及一般工作要求均不代表授權 init。`--yes` 只供代理保存使用者已明確選擇的設定，不代表可自選供應商或模型。
@@ -160,7 +161,17 @@ edict config set bingbu --session "$EDICT_SESSION_ID" --position executor --agen
 edict config set bingbu --session "$EDICT_SESSION_ID" --position executor --inherit
 ```
 
-修改設定不更換執行中的代理；續辦沿用原成員設定快照。完整 v2 設定可在首次 init 時用 `--import-config` 匯入，已有設定不得再匯入覆寫。
+修改設定不更換執行中的代理；續辦沿用原成員設定快照。要讓既有職務改用新設定，或原成員上下文已用盡，由直接上級在原成員結束後執行 `edict team replace <成員ID>`：新成員沿用原職務、scope 與委派範圍，以目前設定啟動，原成員停用，下屬改由新頭領管理。完整 v2 設定可在首次 init 時用 `--import-config` 匯入，已有設定不得再匯入覆寫。
+
+## 太子交棒
+
+原對話上下文接近上限，或要改用其他代理協調時，可把太子職責交給同一台機器上的另一個 Orca 對話：
+
+1. 原對話執行 `/edict handoff`，代理以 `edict handoff export --run <RunID>` 產生一次性交棒檔（存於 EDICT_HOME，權限 600）。
+2. 開一個尚未協調任何 Run 的新對話，執行 `/edict handoff accept <交棒檔>`。CLI 以 Orca `run-use` 接手並核對身分，原對話之後對此 Run 的命令由 Orca 拒絕（`consumer_fenced`）。
+3. 在途 worker 不需重派；之後的提問與 `worker_done` 送到接手對話。
+
+一次只能交出一個未結束的 Run；其他 Run 須已結案或取消，接手後封存為唯讀。已在 macOS、Orca 1.4.251 實測 `run-use` 接手、舊協調者隔離、同一 request ID 去重，以及交棒後 worker 提問與完成回報送達新協調者；Edict 命令層以模擬 Orca 測試。
 
 ## Cursor 持續啟用
 

@@ -213,6 +213,24 @@ edict delegate bingbu --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work
 
 保存回傳 `operation.id`；執行代理應從前言及 work show 核對自己的委派。planning 只屬中書 executor；plan-review／verification 屬門下；coordination 屬尚書；部門 executor 使用 implementation 或 verification。verification 及管理角色沒有專案寫入授權；中書、門下與尚書不能用 implementation 冒充交付。
 
+## 成員換手（team replace）
+
+要讓同一職務改由新的代理或模型接手，或原成員上下文已用盡時，由該成員的直接上級執行 team replace：root 換三省頭領，尚書換部尚書，部尚書換本部郎中。換代理或模型先由 root 以 `config set` 修改設定（只影響之後啟動的成員），再換手。
+
+```sh
+edict team replace "$EDICT_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --spec-file /tmp/edict-replace.json
+```
+
+`/tmp/edict-replace.json`（執行代理須帶所屬工作的目前 generation；頭領不需要）：
+
+```json
+{"generation":1,"spec":"接續 W-001 冰霜特效：讀原成員的報告與 work show，完成剩餘測試並提交成果。"}
+```
+
+條件：原成員已結束且 sync 確認（沒有 submitted、accepted 或 unknown 操作）；它發起的操作沒有結果未確認；它送出的訊息都已送達，沒有待 owner 轉交。執行代理還須符合同一工作世代與方案、有效門下核可、前置工作已結案，且工作未暫停或取消。頭領仍在執行時，上級先以 team send 請它保存交接說明並回報 worker_done，sync 後再換手。
+
+新成員沿用原職稱、直接上級、工作 scope；執行代理另沿用原委派的 reads、writes、resources、worktree、phase 與分頁標題，並以目前設定啟動。原生確認啟動後，原成員停用（retired，記錄 replacedBy），原頭領的下屬改由新頭領管理；執行代理的原委派標為 superseded，目前成果清除，須由新成員重新交付。原生明確拒絕且沒有副作用時，原成員保持有效；結果未知時由發起的上級 recover，不重送。停用成員不能再呼叫 Edict，送給它的 team send 會被拒絕並指出新成員。原頭領停止後，其下屬晚到的原生事件可能改送 root 信箱，由 root 依既有路由轉交；此情境尚未原生實測。
+
 ## 成果、刑部驗收與門下結案
 
 只有六部的 implementation executor 能以自己的 operation 提交交付。`/tmp/edict-result.json`：

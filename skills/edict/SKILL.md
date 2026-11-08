@@ -1,6 +1,6 @@
 ---
 name: edict
-description: 手動管理目前 Orca 對話的 Edict 模式。只有使用者明確呼叫 init、status、config、off、update、help 時使用；安裝或一般工作需求不代表啟用。
+description: 手動管理目前 Orca 對話的 Edict 模式。只有使用者明確呼叫 init、status、config、off、update、handoff、help 時使用；安裝或一般工作需求不代表啟用。
 disable-model-invocation: true
 ---
 
@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 ## 對話身分與資料
 
-優先使用代理的原生對話 ID，例如 CODEX_THREAD_ID 或 Claude 原生技能提供的對話 ID。缺少時首次 init 可回傳 `conversation:UUID`。後續每次 CLI 明確帶同一 `--session`，並保留同一 EDICT_HOME；不以工作目錄、專案或終端機冒充對話，不掃描最近狀態猜選。壓縮摘要保留 active、session、EDICT_HOME、設定、Run 與未完成操作；遺失時回報，不重建。
+優先使用代理的原生對話 ID，例如 CODEX_THREAD_ID 或 Claude 原生技能提供的對話 ID。缺少時首次 init 可回傳 `conversation:UUID`。後續每次 CLI 明確帶同一 `--session`，並保留同一 EDICT_HOME；不以工作目錄、專案或終端機冒充對話，不掃描最近狀態猜選。經 `handoff accept` 接手的對話沿用交棒檔的 session ID，之後每次 CLI 都明確帶它。壓縮摘要保留 active、session、EDICT_HOME、設定、Run 與未完成操作；遺失時回報，不重建。
 
 只接受 v2 session、config 與工作資料，不匯入 v1，不自動遷移或刪除原資料。使用獨立新 EDICT_HOME 驗證這份實作；需將同一路徑交給所有下屬。原有 v1 工作保留在原環境，不切換其在途 CLI。
 
@@ -25,6 +25,7 @@ disable-model-invocation: true
 | config | 調整本對話角色／職位設定，僅影響新派工 |
 | off | 停止新派工與推進，保留資料及在途回報，不自動取消程序 |
 | update | 手動更新共用安裝，核對資料格式，再由本對話重讀 |
+| handoff | 把目前對話的太子職責交給另一個對話；接手對話執行 `handoff accept <交棒檔>` |
 | help | 顯示說明，不啟用 |
 
 明確呼叫入口卻未給子命令時顯示 help。已啟用後的一般工作要求照協調流程處理，不要求每次重打命令；引用範例不構成授權。
@@ -36,7 +37,7 @@ disable-model-invocation: true
 3. 按回答保存：`init --yes --session <ID> --agent <已選代理> [--model <已選模型>] [--effort <已選強度>]`。缺原生 ID 時首次省略 session，保留 CLI 回傳值。不要在代理非互動 shell 等待 TTY 問答。
 4. 保存後讀 `context --session <ID>`，只在 active=true 時讀 [協調流程](references/active.md)；回報目前對話已啟用及設定摘要。
 
-逐角色設定使用 `config set <role>`；職位設定加 `--position head|executor`，移除整組覆寫用 `--position <職位> --inherit`。職位覆寫未設定即繼承角色整組，null model 表示該代理工具預設。換供應商不保留原模型，改模型清除舊 effort；不因繁忙而自動降級。首次不必逐一詢問職位覆寫；有需求才詢問缺少值。完整 v2 設定匯入僅限首次 init，已有資料不得重複匯入覆寫。
+執行中的成員不會因設定改變而換模型；要讓既有職務改用新設定，由直接上級在原成員結束後執行 `team replace <成員ID>`（見工作契約的成員換手段落）。逐角色設定使用 `config set <role>`；職位設定加 `--position head|executor`，移除整組覆寫用 `--position <職位> --inherit`。職位覆寫未設定即繼承角色整組，null model 表示該代理工具預設。換供應商不保留原模型，改模型清除舊 effort；不因繁忙而自動降級。首次不必逐一詢問職位覆寫；有需求才詢問缺少值。完整 v2 設定匯入僅限首次 init，已有資料不得重複匯入覆寫。
 
 ## Cursor 模式
 
@@ -49,6 +50,17 @@ disable-model-invocation: true
 啟用後讀 [協調流程](references/active.md)；需要角色責任與 JSON 時讀 [工作契約](references/workflow.md)，派工／訊息／控制／結果未知時讀 [執行與恢復](references/scheduling.md)。三省由 root 建立平行空頭領，業務仍由中書送審、門下核可、尚書及六部執行。不要用舊 dispatch、task-create、dispatch-ready 或 continue；CLI 明確拒絕這些入口。
 
 原生深度至少 3；不足時說明 **Settings → Orchestration → Nested worker depth**，由使用者確認，不改 App 設定檔。不要因拒絕、沉默或喚醒延後換 Run、重送派工或重設世代。pause／resume／cancel 依原對話明確要求與具體對象執行；resume 不清除取消，off 也不取消程序。
+
+## 交棒
+
+使用者明確要求交棒時才執行，用途是原對話上下文接近上限或要改用其他代理協調。
+
+1. 原對話先處理完已收到的喚醒訊息，再執行 `handoff export --run <RunID> --session <ID> [--note <交接說明>]`。CLI 會拒絕本對話另有未結束 Run 或上一筆接手未確認的情況；照實回報，不建新 Run 繞過。回報輸出的交棒檔路徑，交棒檔含一次性憑證，不貼進聊天或外部服務。
+2. 請使用者在同一台機器開另一個尚未協調任何 Run 的 Orca 對話（Claude Code 或 Codex），在該對話輸入 `/edict handoff accept <交棒檔>`（Codex 用 `$edict`）。接手代理沿用同一 EDICT_HOME 執行 `handoff accept --file <交棒檔>`；CLI 以 Orca run-use 接手並核對協調者身分。
+3. 成功後接手對話依輸出的 next：之後每次帶交棒檔的 session、讀 context 與[協調流程](references/active.md)、`sync --run` 核對，並處理 pending 內的 owner-required 轉交與結果未確認操作。原對話之後對此 Run 的命令由 Orca 拒絕；原對話停止協調，只回答使用者問題。
+4. 接手失敗或結果未確認時，以同一交棒檔再次 accept，CLI 重用同一 request ID 由 Orca 去重；不重新 export、不建新 Run。尚未接手前，原對話可用 `handoff cancel --run <RunID> --session <ID>` 撤回。
+
+限制：一次只能交出一個未結束的 Run，其他 Run 須已結案或取消，接手後封存為唯讀（Orca run-use 只讓一個對話保留一個接手的 Run）。交棒檔放在 EDICT_HOME，跨機器不支援。Cursor 協調者模式的交棒未驗證。
 
 ## 更新與重讀
 

@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { ROLES, workerSpec } from './roles.mjs';
+import { ROLES, TAIZI_DUTY, workerSpec } from './roles.mjs';
 import { defaults, validateConfig, resolveSettings } from './config.mjs';
 import { configure } from './configure.mjs';
 import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult } from './orca.mjs';
-import { ROOT, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
+import { ROOT, home, atomicJSON, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
 import { updateInstallation } from './update.mjs';
 import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } from './workflow.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
@@ -43,9 +43,16 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
   edict review record --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team send <成員ID> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team forward <交接ID> --run <RunID> --session <ID>
+  edict team replace <成員ID> --run <RunID> --spec-file <JSON|-> --session <ID>
+    （僅直接上級；原成員須已結束。新成員沿用原職務與範圍，使用目前角色設定，例如 config set 換代理後）
   edict control pause|resume|cancel|restart --run <RunID> [--work <W-ID>] --session <ID>
   edict sync --run <RunID> --session <ID>
   edict recover --run <RunID> --operation <ID> --session <ID>
+
+太子交棒（目前協調者 → 另一個對話）：
+  edict handoff export --run <RunID> [--note <交接說明>] --session <ID>   產生一次性交棒檔
+  edict handoff accept --file <交棒檔>                                    在接手對話執行 Orca run-use 並核對
+  edict handoff cancel --run <RunID> --session <ID>                       撤回尚未接手的交棒
 
 需求、方案與委派可用 extraReads: [{root: <既有目錄絕對路徑>, reads: [<相對該目錄的路徑>]}] 讀取其他工作樹；寫入只限單一工作樹。
 commit、merge 等寫入 git 中繼資料的操作宣告資源 git:<git rev-parse --git-common-dir 的絕對路徑>，同一 repo 互斥。
@@ -122,6 +129,7 @@ export async function main(argv) {
     worktree: { type: 'string' }, repo: { type: 'string' }, name: { type: 'string' },
     'base-branch': { type: 'string' }, title: { type: 'string' },
     work: { type: 'string' }, operation: { type: 'string' }, position: { type: 'string' }, inherit: { type: 'boolean' }, objective: { type: 'string' },
+    file: { type: 'string' }, note: { type: 'string' },
   } });
   const [command, sub, role] = positionals;
   if (options.version) {
@@ -147,10 +155,11 @@ export async function main(argv) {
     control: ['session', 'run', 'work'],
     sync: ['session', 'run'],
     recover: ['session', 'run', 'operation'],
+    handoff: ['session', 'run', 'file', 'note'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
-  if (positionals.length > (['config', 'team'].includes(command) ? 3 : ['dispatch','task-create','continue','run','work','review','control','delegate'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
+  if (positionals.length > (['config', 'team'].includes(command) ? 3 : ['dispatch','task-create','continue','run','work','review','control','delegate','handoff'].includes(command) ? 2 : 1)) throw new Error('多餘的命令參數');
   if (command === 'roles') { for (const [key, info] of Object.entries(ROLES)) console.log(`${key}\t${info.name}\t${info.duty}`); return 0; }
   if (command === 'update') {
     const supplied = options.session || process.env.EDICT_SESSION_ID || (process.env.CODEX_THREAD_ID ? `codex:${process.env.CODEX_THREAD_ID}` : null);
@@ -161,6 +170,20 @@ export async function main(argv) {
     const state = id ? readSession(id) : null;
     print({ ...result, session: id, active: state?.active ?? false, runId: state?.runId ?? null,
       note: '本機安裝已核對；目前對話尚須完成 reload.files 的重讀。其他對話不會自動啟用；既有代理與工作樹不移動。' });
+    return 0;
+  }
+  if (command === 'handoff' && sub === 'accept') {
+    if (!options.file || options.run || options.note) throw new Error('用法：handoff accept --file <交棒檔> [--session <ID>]');
+    const packet = JSON.parse(fs.readFileSync(options.file, 'utf8'));
+    const target = sessionId(packet?.session);
+    if (options.session && options.session !== target) throw new Error('--session 與交棒檔的 Edict 對話身分不同；不改用其他身分');
+    if (path.resolve(home()) !== packet.edictHome) throw new Error(`交棒檔屬於 EDICT_HOME=${packet.edictHome}；請以同一 EDICT_HOME 執行，不另建狀態`);
+    const result = new Workflow(target).handoffAccept(packet);
+    print({ ...result, roleCard: TAIZI_DUTY,
+      next: [`此對話之後每次 CLI 都帶 --session ${target}，並沿用 EDICT_HOME=${packet.edictHome}`,
+        `先讀 context 與 active.md，再 sync --run ${result.runId} 核對原生狀態`,
+        `以 orca orchestration inbox --terminal run:${result.runId} --limit 50 查看交棒前已處理的郵件`,
+        '逐項處理 pending.ownerRequired（team forward）與 pending.unknown（由原發起者 recover）；不重送'] });
     return 0;
   }
   const id = sessionId(options.session || (command === 'init' && !process.env.EDICT_SESSION_ID && !process.env.CODEX_THREAD_ID ? `conversation:${randomUUID()}` : undefined));
@@ -240,6 +263,11 @@ export async function main(argv) {
   if (command === 'team') {
     if (sub === 'send') { const data=input(); print(workflow.message(options.run, role, options.work, data.body, undefined, data.generation, data.kind || 'handoff')); return 0; }
     if (sub === 'forward') { print(workflow.forward(options.run, role)); return 0; }
+    if (sub === 'replace') {
+      if (!role) throw new Error('用法：team replace <成員ID> --run <RunID> --spec-file <JSON>');
+      const result = workflow.replace(options.run, role, input());
+      print(result); return result.confirmed === false ? 1 : 0;
+    }
     if (sub !== 'ensure' || !role) throw new Error('用法：team ensure <角色> --spec-file <JSON>');
     const result = workflow.launch(options.run, role, 'head', options.work, input());
     print(result); return result.confirmed === false ? 1 : 0;
@@ -256,6 +284,16 @@ export async function main(argv) {
     print(workflow.control(options.run, sub, options.work)); return 0;
   }
   if (command === 'sync') { print(workflow.sync(options.run)); return 0; }
+  if (command === 'handoff') {
+    if (sub === 'cancel') { print(workflow.handoffCancel(options.run)); return 0; }
+    if (sub !== 'export') throw new Error('handoff 支援 export、accept、cancel');
+    const packet = workflow.handoffExport(options.run, options.note);
+    const file = path.join(home(), 'handoffs', `${packet.id}.json`);
+    atomicJSON(file, packet);
+    const { token, ...summary } = packet;
+    print({ ...summary, file, next: `請使用者開啟另一個 Orca 對話（尚未協調任何 Run），在該對話執行 edict handoff accept --file ${JSON.stringify(file)}。接手後本對話對此 Run 的命令會被 Orca 拒絕；交棒前先處理完已收到的喚醒訊息。` });
+    return 0;
+  }
   if (command === 'recover') {
     if (!options.operation) throw new Error('必須指定 --operation');
     print(workflow.recover(options.run, options.operation)); return 0;

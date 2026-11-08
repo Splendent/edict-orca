@@ -47,6 +47,18 @@ export class NativeRuntime {
     }
     return { owner: false, dispatchId: dispatch.id };
   }
+  // run-use rebinds the Run to the calling conversation; Orca then fences the previous coordinator (consumer_fenced)
+  // and keeps only this Run bound to the caller.
+  takeover(runId, requestId) {
+    const data = this.call(['orchestration', 'run-use', '--id', runId, '--retry-request', requestId]);
+    const id = data.run?.id || data.runId;
+    if (id !== runId || this.currentRun() !== runId) throw new Error('原生 Run 接手結果未確認；保留收據，不得改用其他 Run');
+    return data;
+  }
+  coordinator(runId) {
+    const run = this.call(['orchestration', 'run-show', '--id', runId]).run;
+    return { handle: run?.coordinator_handle ?? null, consumerGeneration: run?.consumer_generation ?? null };
+  }
   open(objective, requestId) {
     const data = this.call(['orchestration', 'run-create', '--objective', objective, '--retry-request', requestId]);
     const id = data.run?.id || data.runId;
