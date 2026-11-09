@@ -1,0 +1,652 @@
+{
+  "runId": "run_196d0722f532",
+  "session": "claude:57e189de-7318-4955-92b4-905a5562fa9c",
+  "cwd": "C:/Users/USER/orca/workspaces/vampire-web/urchin",
+  "measurements": {
+    "baseline441f582": [
+      {
+        "iteration": 1,
+        "totalMs": 3220.9431,
+        "exitCode": 0,
+        "commandMs": 3074.089,
+        "lockMs": [
+          996.9105999999999,
+          1086.5436999999997
+        ],
+        "lockTotalMs": 2083.4542999999994,
+        "lockMaxMs": 1086.5436999999997,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 2,
+        "totalMs": 2953.6373,
+        "exitCode": 0,
+        "commandMs": 2849.1887,
+        "lockMs": [
+          932.6380999999999,
+          1000.2442999999998
+        ],
+        "lockTotalMs": 1932.8823999999997,
+        "lockMaxMs": 1000.2442999999998,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 3,
+        "totalMs": 3046.3693000000003,
+        "exitCode": 0,
+        "commandMs": 2943.589,
+        "lockMs": [
+          946.3741000000001,
+          1019.566
+        ],
+        "lockTotalMs": 1965.9401000000003,
+        "lockMaxMs": 1019.566,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 4,
+        "totalMs": 3178.2109,
+        "exitCode": 0,
+        "commandMs": 3084.5589,
+        "lockMs": [
+          1006.9916999999999,
+          1123.5742999999998
+        ],
+        "lockTotalMs": 2130.566,
+        "lockMaxMs": 1123.5742999999998,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 5,
+        "totalMs": 2877.9578,
+        "exitCode": 0,
+        "commandMs": 2790.8965000000003,
+        "lockMs": [
+          934.8206,
+          960.1189999999999
+        ],
+        "lockTotalMs": 1894.9396,
+        "lockMaxMs": 960.1189999999999,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      }
+    ],
+    "modified": [
+      {
+        "iteration": 1,
+        "totalMs": 2829.5378,
+        "exitCode": 0,
+        "commandMs": 2734.0349,
+        "lockMs": [
+          891.8820000000001,
+          952.2959000000001
+        ],
+        "lockTotalMs": 1844.1779000000001,
+        "lockMaxMs": 952.2959000000001,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 2,
+        "totalMs": 2905.938299999998,
+        "exitCode": 0,
+        "commandMs": 2810.2898,
+        "lockMs": [
+          915.5206000000001,
+          978.6795999999999
+        ],
+        "lockTotalMs": 1894.2002,
+        "lockMaxMs": 978.6795999999999,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 3,
+        "totalMs": 2839.5748999999996,
+        "exitCode": 0,
+        "commandMs": 2749.2541,
+        "lockMs": [
+          879.9293,
+          991.0012999999999
+        ],
+        "lockTotalMs": 1870.9306,
+        "lockMaxMs": 991.0012999999999,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 4,
+        "totalMs": 2846.0638,
+        "exitCode": 0,
+        "commandMs": 2754.6293,
+        "lockMs": [
+          876.5114000000001,
+          995.8012999999999
+        ],
+        "lockTotalMs": 1872.3127,
+        "lockMaxMs": 995.8012999999999,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      },
+      {
+        "iteration": 5,
+        "totalMs": 2819.259100000003,
+        "exitCode": 0,
+        "commandMs": 2726.7945,
+        "lockMs": [
+          886.3494,
+          963.7319999999997
+        ],
+        "lockTotalMs": 1850.0813999999996,
+        "lockMaxMs": 963.7319999999997,
+        "queries": [
+          "orchestration worker-list"
+        ],
+        "blockedEffects": [
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present",
+          "present"
+        ]
+      }
+    ]
+  },
+  "snapshotSha256": "4011fd344f6f4cf2cb36b1a69eb958a43ee0307370b13b74c36f2d7ffaa220ba",
+  "identity": "fixed owner fixture on private copy; no native takeover",
+  "effects": "present suppressed; native mutation methods blocked; only read-only Orca calls permitted",
+  "capacity": [
+    {
+      "runId": "run_04be5fe4954f",
+      "before": {
+        "operations": 3,
+        "members": 3,
+        "executors": 0
+      },
+      "after": {
+        "operations": 1,
+        "members": 1,
+        "executors": 0
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "before": {
+        "operations": 13,
+        "members": 5,
+        "executors": 0
+      },
+      "after": {
+        "operations": 0,
+        "members": 0,
+        "executors": 0
+      }
+    },
+    {
+      "runId": "run_196d0722f532",
+      "before": {
+        "operations": 5,
+        "members": 5,
+        "executors": 1
+      },
+      "after": {
+        "operations": 5,
+        "members": 5,
+        "executors": 1
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "runId": "run_04be5fe4954f",
+      "operationId": "5b50600e-8c9e-47e6-a30b-1dfcdc6f5357",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_04be5fe4954f",
+      "operationId": "17cfb8cb-db02-4051-b35f-d172f93ab7d5",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "af1067b1-c655-488c-b34a-b0d97c7e08a3",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "4dbe0dcf-596d-48fb-a405-3b439da65c7f",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "ce3dc479-28ab-4b56-8de7-79219916f7bc",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "0b22685c-f645-4cb7-843b-6d0cd20eea96",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "2d6913fe-1f7a-43c2-b4d3-9874119fdf11",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "af5e40f1-9319-4430-95fa-73c9409afe1f",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "5047df4d-374e-470d-a49c-285f08077f1b",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "b82fe856-0b34-44ac-92ad-b4f6d4587244",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d66a9ded-a309-4be6-9b38-be760ef66559",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "16e4d37c-867a-4932-b3c6-fe172d38e582",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "c70af3b8-9c87-49f6-b529-966435942395",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d6de5526-a738-441a-834b-8479a1b8df16",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d5662e03-1496-4f7c-b72f-c3d8c083c268",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    }
+  ],
+  "firstEvidenceCalls": 16,
+  "secondEvidenceCalls": 1,
+  "cacheFiles": 15,
+  "success": true,
+  "temporaryCopyRemoved": true
+}

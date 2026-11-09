@@ -1,0 +1,594 @@
+✔ claude: configured model/effort are passed as distinct Orca argv values (0.8338ms)
+✔ codex: configured model/effort are passed as distinct Orca argv values (0.0992ms)
+✔ cursor: configured model/effort are passed as distinct Orca argv values (0.0637ms)
+✔ tool defaults omit model/effort, invalid worktree combinations are rejected (0.3089ms)
+✔ runtime executable resolution never chooses Linux screen reader (0.0774ms)
+✖ authorized team creation delivers literal stdin, argv, identity and cwd (180.6214ms)
+✖ native adapter preserves child-worktree selectors and names as literal argv (102.9374ms)
+✖ failed authorized start preserves the native receipt and is not retried (130.3534ms)
+✖ workflow receipt saving is independent from a contended session index (116.4208ms)
+✖ incomplete and wrong-Run receipts remain durable unknown operations without retries (116.8771ms)
+✔ retired dispatch, task-create, batch and continuation entries cannot mutate native state (366.5748ms)
+✔ all role specifications include destructive-action, secrecy and upstream-output safeguards (0.6805ms)
+✔ generated executor instructions select delivery and decision commands by role and phase (0.5165ms)
+✔ head instructions reserve formal decisions for the appropriate role and link the real schema (0.3999ms)
+✔ retired dry-run entry is rejected without native calls or session changes (96.636ms)
+✖ doctor checks interface and runtime without dispatch or consuming inbox (111.3544ms)
+✖ doctor rejects missing dependency and continuation capabilities before runtime access (56.3735ms)
+✖ doctor preserves unsupported-command failure and does not claim success (53.1078ms)
+✔ version reports package identity without reading sessions or invoking Orca (187.4253ms)
+✔ doctor does not claim success for unreachable runtime (104.4668ms)
+✔ empty specs, unsupported options and invalid role fail before Orca call (281.02ms)
+✔ v2 defaults contain independent complete settings for every role (1.2194ms)
+✔ each position inherits a complete role group across all agents (0.7026ms)
+✔ position overrides replace the entire group without mixing providers (0.1674ms)
+✔ validation and resolution neither normalize nor mutate frozen settings (0.2122ms)
+✔ invalid v1 is rejected without changing input (0.4188ms)
+✔ invalid unknown root field is rejected without changing input (0.1718ms)
+✔ invalid missing roles is rejected without changing input (0.0934ms)
+✔ invalid roles array is rejected without changing input (0.1015ms)
+✔ invalid missing role is rejected without changing input (0.1138ms)
+✔ invalid unknown role is rejected without changing input (0.154ms)
+✔ invalid unknown agent is rejected without changing input (0.1433ms)
+✔ invalid unknown setting is rejected without changing input (0.1031ms)
+✔ invalid missing role model is rejected without changing input (0.0744ms)
+✔ invalid undefined role effort is rejected without changing input (0.0718ms)
+✔ invalid effort without model is rejected without changing input (0.0533ms)
+✔ invalid blank model is rejected without changing input (0.0656ms)
+✔ invalid multiline effort is rejected without changing input (0.0784ms)
+✔ invalid null overrides is rejected without changing input (0.0635ms)
+✔ invalid overrides array is rejected without changing input (0.0583ms)
+✔ invalid non-record overrides is rejected without changing input (0.0769ms)
+✔ invalid unknown override role is rejected without changing input (0.0811ms)
+✔ invalid null role overrides is rejected without changing input (0.0626ms)
+✔ invalid unknown position is rejected without changing input (0.0823ms)
+✔ invalid null position is rejected without changing input (0.0579ms)
+✔ invalid partial position is rejected without changing input (0.0626ms)
+✔ invalid position effort without model is rejected without changing input (0.0811ms)
+✔ resolver rejects unknown roles and positions instead of silently inheriting (0.3615ms)
+✔ noninteractive configure creates v2 and preserves explicit position groups (0.7024ms)
+✔ TTY initialization can choose shared v2 settings without position questions (37.6889ms)
+✔ TTY role edits clear provider-specific settings and preserve position overrides (40.2936ms)
+✔ a handoff moves root duties to another conversation and Orca fences the previous one (70.2007ms)
+✔ handoff accept refuses the exporting conversation, workers and conversations already coordinating a Run (35.2118ms)
+✔ a forged, replaced or revoked packet cannot take over the Run (44.7581ms)
+✔ an unconfirmed takeover keeps one request ID so a retried accept is deduplicated by Orca (56.7892ms)
+✔ other open Runs block a handoff; finished Runs are archived and refuse later changes (73.4501ms)
+✔ the handoff packet lists owner relays and unconfirmed operations for the receiver (53.8958ms)
+✔ context gives the root its duty card and handoff history (26.807ms)
+✖ cli: export writes a private packet without printing the token; accept in another conversation takes over (119.3635ms)
+✖ native calls request full records only for orchestration commands (3.4494ms)
+✖ an unverified start that still returns the Task/Dispatch pair is kept as a receipt (1.7191ms)
+✔ currentRun reads the full native run object and preserves an unbound caller (0.7086ms)
+✔ identity recognizes the current owner and another Run owned by the same native coordinator (0.1471ms)
+✔ identity uses the native peek mailbox and full Dispatch instead of a claimed role (0.166ms)
+✔ identity refuses an unrelated mailbox or a revoked Dispatch (0.3979ms)
+✔ workers follows the second page so an older unfinished Dispatch is not omitted (0.4064ms)
+✔ workers preserves failed or unknown liveness and the original DTO without inferring termination (0.1538ms)
+✔ workers accepts explicit state but never substitutes dispatchStatus for a missing worker state (0.1232ms)
+✔ workers returns a confirmed empty page (0.1142ms)
+✔ workers refuses missing page rather than returning a partial inventory (0.0854ms)
+✔ workers refuses missing workers rather than returning a partial inventory (0.0518ms)
+✔ workers refuses nonboolean hasMore rather than returning a partial inventory (0.0257ms)
+✔ workers refuses missing next cursor rather than returning a partial inventory (0.0256ms)
+✔ workers refuses empty continuing page rather than returning a partial inventory (0.0426ms)
+✔ workers refuses cursor on final page rather than returning a partial inventory (0.0215ms)
+✔ workers refuses cross-Run row rather than returning a partial inventory (0.0277ms)
+✔ workers refuses a repeated cursor, duplicate Dispatch, or expired snapshot after the first page (0.1817ms)
+✔ dispatch returns the actual full worker-show Dispatch for recovery verification (0.0661ms)
+✔ dispatch refuses incomplete or mismatched identity: undefined (0.0419ms)
+✔ dispatch refuses incomplete or mismatched identity: {"id":"other","runId":"run-example","taskId":"task-example","status":"dispatched","capabilityRevokedAt":null} (0.0202ms)
+✔ dispatch refuses incomplete or mismatched identity: {"id":"ctx-example","runId":"","taskId":"task-example","status":"dispatched","capabilityRevokedAt":null} (0.0193ms)
+✔ dispatch refuses incomplete or mismatched identity: {"id":"ctx-example","runId":"run-example","taskId":null,"status":"dispatched","capabilityRevokedAt":null} (0.0186ms)
+✔ send normalizes the nested full message receipt while retaining its native evidence (0.1252ms)
+✔ send does not conceal explicit malformed IDs behind a nested message (0.0866ms)
+✔ request preserves pending accepted checkpoints and completed receipts for the recovery policy (0.0495ms)
+✔ rename uses a verified worker handle and changes a dedicated tab without dispatching work (0.2251ms)
+✔ rename changes only its pane when another agent shares the tab (0.0671ms)
+✔ rename refuses cross-Run, mismatched handles, partial inventory and mismatched pane identity (0.1152ms)
+✔ rename reports agents without terminal tabs as unavailable without changing their launch surface (0.0416ms)
+✔ a hidden worker gets a visible tab and returns to its caller before naming (0.0756ms)
+✔ a failed reveal still returns to its caller and never creates another worker (0.0596ms)
+✔ a supervisor replaces a settled executor with the current settings and the old member is retired (204.4757ms)
+✔ replacing a settled head re-parents its subordinates and keeps later ensures on the new head (179.2027ms)
+✔ root replaces a settled Sanshu head; refused starts leave the original member active (167.5033ms)
+✔ replacement is refused while the work is paused (165.7277ms)
+✔ read/write overlaps hold conflicting work; separate declared ranges can run together (64.7251ms)
+✔ uncreated worktrees have unknown physical ranges and serialize writers (36.8035ms)
+✔ precreated independent worktrees can write the same relative paths concurrently (36.8032ms)
+✔ an unscoped active task blocks even an uncreated writer with unknown physical ranges (28.5642ms)
+✖ symbolic links to existing and future files cannot bypass conflicts (18.0882ms)
+✔ case aliases use physical identity when the filesystem supports them (39.16ms)
+✖ directory scopes include linked descendants and hard-linked files (17.6709ms)
+✔ ready selection retains independent parallel work and true dependency boundaries (45.8843ms)
+✔ retired task and batch CLI paths reject even caller-supplied approval with zero native calls (250.7125ms)
+✖ native adapter forwards structured deps, parent and literal task text without shell interpretation (60.6763ms)
+✔ scoped message retains original Run, member, model snapshot and literal body (118.2301ms)
+✖ native message adapter keeps target, Run and literal body without replacement model arguments (56.3037ms)
+✔ a live scoped message saves its receipt without inventing a new Dispatch (116.3267ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {} (103.1869ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":123,"taskId":456} (104.5598ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":"ctx-new","taskId":456} (106.3117ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":123,"taskId":"task-new"} (106.0392ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":"ctx-new"} (109.6742ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","taskId":"task-new"} (109.2281ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":" ","taskId":"task-new"} (102.8526ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":"ctx-new","taskId":"\t"} (103.8754ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","dispatchId":0,"taskId":null} (101.0064ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":123,"dispatchId":"ctx-new","taskId":"task-new"} (98.4575ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","runId":0} (102.8123ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","runId":" "} (100.6247ms)
+✔ invalid scoped message receipt stays durable unknown without rebinding: {"messageId":"msg-valid","runId":"other-run"} (103.387ms)
+✔ failure of a later independent start preserves accepted and unknown operation receipts (112.937ms)
+✔ independent same-role delegates can both remain in flight without waiting for the first result (114.9437ms)
+✔ two conversations in the same project remain isolated and project stays unchanged (111.2011ms)
+✔ native session IDs, not project or terminal, define scope (0.4214ms)
+✔ init without native ID returns a conversation token without modifying the project (107.2787ms)
+✔ status help off and context never enable an uninitialized conversation (209.2ms)
+✔ repeat init and off preserve run and settings; config affects only its conversation (246.4124ms)
+✔ invalid config edits leave persisted state intact (198.1379ms)
+✔ v2 position configuration is isolated, replaces provider settings and can restore inheritance (222.4764ms)
+✔ Cursor coordinator remains pending until mode confirmation and off clears confirmation (268.8085ms)
+✔ stale writes cannot overwrite newer conversation state (19.4159ms)
+✔ dead-owner lock permits off, config and repeated init to recover (204.3632ms)
+✔ abandoned empty and malformed locks recover without resetting v2 state (114.3435ms)
+✔ an old lock with a live owner is retained and error names its path (554.4321ms)
+✔ a fresh incomplete lock is not treated as abandoned (576.7021ms)
+✔ a contended lock that is released during the bounded wait allows writing (272.1987ms)
+✔ complete v2 configuration is imported explicitly and the source is unchanged (95.1853ms)
+✔ v1 configuration and session input are rejected without migration or overwrite (101.2996ms)
+✔ noninteractive init without --yes stops before activation (43.8662ms)
+✖ install never modifies agent settings or hooks and enables no sessions (3.2838ms)
+✔ installer refuses collisions before touching unrelated configuration (1.8091ms)
+✖ POSIX hook paths use shell quoting rather than JSON quoting (1.5967ms)
+✔ CLI updates across rewritten history and preserves all conversation state and work (2451.164ms)
+✔ standalone CLI update creates no conversation and up-to-date updates still return reload files (1463.071ms)
+▶ update refuses tracked and untracked local work before network access
+  ✔ tracked (1336.6065ms)
+  ✔ untracked (1405.5621ms)
+✔ update refuses tracked and untracked local work before network access (2742.7697ms)
+✔ update rejects a foreign origin and never rewrites remote configuration (1306.0146ms)
+✔ mismatched release metadata never switches files and cleans its private ref (1653.4013ms)
+✔ network failures do not switch the installation and allow a later explicit update (1816.3473ms)
+✔ preview versions sort numerically and drafts or invalid tags are not installed (1775.7841ms)
+✔ stable installations do not silently enter previews or downgrade (1367.6238ms)
+✔ local edits made while querying releases are retained and prevent switching (1704.9067ms)
+✔ an existing update lock is retained instead of starting another update (1371.456ms)
+✔ invalid release responses fail without accepting arbitrary server data (0.4755ms)
+✔ delegation names and status expose all subordinate assignments and cross-worktree locations (192.7625ms)
+✔ presentation failure preserves accepted work and sync retries only presentation (171.7997ms)
+✔ head handoff keeps the assignment visible on its existing Dispatch (141.7984ms)
+✔ a design-only item closes on its approved plan without an implementation result (153.9442ms)
+✔ native-bound head hierarchy completes plan, independent acceptance and Menxia closure (194.7671ms)
+✔ unknown native caller, executor delegation and cross-department heads are rejected without mutations (138.9983ms)
+✔ scope widening and stale or rejected approval cannot launch work (151.2274ms)
+✔ pause before admission rejects start; resume cannot bypass enclosing Run pause (138.0797ms)
+✔ pause after durable submission preserves native receipt and reports in-flight work (151.5412ms)
+✔ cancel persists across late results and cannot be cleared by resume (182.7298ms)
+✔ off between submission and receipt preserves receipt but prohibits subsequent work (144.2631ms)
+✔ same-file claims conflict; distinct readonly verification waits for writers (138.4639ms)
+✔ overlap rejection names the in-flight work, operation and conflicting dimension (132.4132ms)
+✔ sibling outputs under a wholly read directory conflict with a hint (133.3642ms)
+✔ sibling outputs with file-level reads run in parallel (143.6287ms)
+✔ shared tool resources are named; distinct resources and disjoint paths run in parallel (194.2003ms)
+✔ a wildcard tool resource and unknown ranges are named as such (177.3908ms)
+✔ root amends requirement resources, clearing plan approval and recording history (148.3216ms)
+✔ amend refuses a generation that already has a delivered result (147.5235ms)
+✔ a result from an earlier revision of the generation does not block amend (143.3699ms)
+✔ amend bumps the revision so a settled stale executor result is archived only (173.2092ms)
+✔ amend widens reads and extraReads but never narrows them or changes writes (155.3204ms)
+✔ extraReads accept only existing absolute directories with contained relative reads (129.8677ms)
+✔ UNC and drive-letter spellings of one extraReads root are the same root (194.0816ms)
+✔ a cross-root read conflicts with a writer in that root and passes disjoint ranges (199.1396ms)
+✔ git metadata resources are canonicalised so one common dir is exclusive (196.8749ms)
+✔ amend is refused while an executor of the generation is outstanding and after closure (168.4799ms)
+✔ unknown native start is durable, keeps its slot and is never automatically retried (125.9537ms)
+✔ changed review evidence revokes approval, changed result revokes acceptance (127.6176ms)
+✔ a reviewer cannot replace engineering output with its own submission (117.0894ms)
+✔ one delivered implementation cannot hide a failed necessary implementation (176.9047ms)
+✔ continuation replaces its contribution and claims resources before native send (206.7185ms)
+✔ cancel before late start receipt persists and runs the authorized stop once accepted (158.879ms)
+✔ failed with live or unverifiable resources retains claims and cancellation remains pending (204.6938ms)
+✔ recovering a lost continuation applies replacement and message finalization exactly once (218.0436ms)
+✔ recovery never overwrites a receipt Run or trusts a cross-Run checkpoint (151.8547ms)
+✔ owner forwarding settles the original request and preserves the replacement chain (166.7396ms)
+✔ a peer send refused as not-a-helper of a settled dispatch becomes owner-required and rebinds on forward (188.7723ms)
+✔ a continuation delivered to an executor's open follow-up rebinds the member from the delivery target (198.2379ms)
+✔ a message-only delivery to another Run or an unresolvable dispatch stays unknown (172.7641ms)
+✔ a plain task_not_found without the helper refusal stays unknown (158.2445ms)
+✔ a proven no-effect refusal can be explicitly replaced but unknown work cannot (175.1865ms)
+✔ verification cannot replace a refused implementation obligation (138.136ms)
+✔ an explicitly authorized Xingbu implementation retains its writes and cannot self-accept (154.2761ms)
+✔ dependency cycles are rejected without replacing the current plan (120.22ms)
+✔ named tool resources do not inherit filesystem prefix authorization (112.1638ms)
+✔ a worker knowing the coordinator session cannot change session-wide authority or open a Run (113.2606ms)
+✔ two dead-lock recoverers cannot remove a newly acquired live lock (232.8347ms)
+✔ a child worktree result is checked against its native confirmed root (141.4107ms)
+ℹ tests 205
+ℹ suites 0
+ℹ pass 188
+ℹ fail 17
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 17756.353
+
+✖ failing tests:
+
+test at test\cli.test.mjs:99:1
+✖ authorized team creation delivers literal stdin, argv, identity and cwd (180.6214ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:104:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:117:1
+✖ native adapter preserves child-worktree selectors and names as literal argv (102.9374ms)
+  AssertionError [ERR_ASSERTION]: file:///C:/Users/USER/edict-orca/src/orca.mjs:52
+    if (result.error) throw new Error(`${command} ${args.slice(0, 2).join(' ')}：${result.error.message}；沒有改用其他 Orca 入口，也沒有重試`);
+                            ^
+
+  Error: C:\Users\USER\AppData\Local\Temp\edict-test-ehxDiE\project\fake orca.mjs orchestration worker-start：spawnSync C:\Users\USER\AppData\Local\Temp\edict-test-ehxDiE\project\fake orca.mjs EFTYPE；沒有改用其他 Orca 入口，也沒有重試
+      at runOrca (file:///C:/Users/USER/edict-orca/src/orca.mjs:52:27)
+      at NativeRuntime.call (file:///C:/Users/USER/edict-orca/src/native.mjs:18:20)
+      at NativeRuntime.start (file:///C:/Users/USER/edict-orca/src/native.mjs:108:23)
+      at file:///C:/Users/USER/AppData/Local/Temp/edict-test-ehxDiE/project/[eval1]:1:99
+      at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+      at async node:internal/modules/esm/loader:223:26
+      at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:220:20)
+      at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+  Node.js v24.21.0
+
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:123:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:136:1
+✖ failed authorized start preserves the native receipt and is not retried (130.3534ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:139:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:151:1
+✖ workflow receipt saving is independent from a contended session index (116.4208ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:153:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:168:1
+✖ incomplete and wrong-Run receipts remain durable unknown operations without retries (116.8771ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:178:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:277:1
+✖ doctor checks interface and runtime without dispatch or consuming inbox (111.3544ms)
+  AssertionError [ERR_ASSERTION]: 失敗：C:\Users\USER\AppData\Local\Temp\edict-test-7sdPYe\project\fake orca.mjs orchestration worker-start：spawnSync C:\Users\USER\AppData\Local\Temp\edict-test-7sdPYe\project\fake orca.mjs EFTYPE；沒有改用其他 Orca 入口，也沒有重試
+
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:281:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:295:1
+✖ doctor rejects missing dependency and continuation capabilities before runtime access (56.3735ms)
+  AssertionError [ERR_ASSERTION]: 失敗：C:\Users\USER\AppData\Local\Temp\edict-test-P0m2RR\project\fake orca.mjs orchestration worker-start：spawnSync C:\Users\USER\AppData\Local\Temp\edict-test-P0m2RR\project\fake orca.mjs EFTYPE；沒有改用其他 Orca 入口，也沒有重試
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:309:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\cli.test.mjs:316:1
+✖ doctor preserves unsupported-command failure and does not claim success (53.1078ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 2
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/cli.test.mjs:320:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\handoff.test.mjs:162:1
+✖ cli: export writes a private packet without printing the token; accept in another conversation takes over (119.3635ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/handoff.test.mjs:190:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\native.test.mjs:22:1
+✖ native calls request full records only for orchestration commands (3.4494ms)
+  Error: C:\Users\USER\AppData\Local\Temp\edict-native-flags-FSvic6\orca-fixture orchestration worker-show：spawnSync C:\Users\USER\AppData\Local\Temp\edict-native-flags-FSvic6\orca-fixture ENOENT；沒有改用其他 Orca 入口，也沒有重試
+      at runOrca (file:///C:/Users/USER/edict-orca/src/orca.mjs:52:27)
+      at NativeRuntime.call (file:///C:/Users/USER/edict-orca/src/native.mjs:18:20)
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/native.test.mjs:29:27)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test\native.test.mjs:33:1
+✖ an unverified start that still returns the Task/Dispatch pair is kept as a receipt (1.7191ms)
+  Error: C:\Users\USER\AppData\Local\Temp\edict-native-unverified-Udg6cG\orca-fixture orchestration worker-start：spawnSync C:\Users\USER\AppData\Local\Temp\edict-native-unverified-Udg6cG\orca-fixture ENOENT；沒有改用其他 Orca 入口，也沒有重試
+      at runOrca (file:///C:/Users/USER/edict-orca/src/orca.mjs:52:27)
+      at NativeRuntime.call (file:///C:/Users/USER/edict-orca/src/native.mjs:18:20)
+      at NativeRuntime.start (file:///C:/Users/USER/edict-orca/src/native.mjs:108:23)
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/native.test.mjs:42:26)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test\schedule.test.mjs:94:1
+✖ symbolic links to existing and future files cannot bypass conflicts (18.0882ms)
+  Error: EPERM: operation not permitted, symlink 'actual' -> 'C:\Users\USER\AppData\Local\Temp\edict-ranges-tkZyJy\project\alias'
+      at Object.symlinkSync (node:fs:1937:11)
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/schedule.test.mjs:97:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    errno: -4048,
+    code: 'EPERM',
+    syscall: 'symlink',
+    path: 'actual',
+    dest: 'C:\\Users\\USER\\AppData\\Local\\Temp\\edict-ranges-tkZyJy\\project\\alias'
+  }
+
+test at test\schedule.test.mjs:112:1
+✖ directory scopes include linked descendants and hard-linked files (17.6709ms)
+  Error: EPERM: operation not permitted, symlink '..\outside\file.txt' -> 'C:\Users\USER\AppData\Local\Temp\edict-ranges-dW3Gtx\project\sources\link.txt'
+      at Object.symlinkSync (node:fs:1937:11)
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/schedule.test.mjs:116:6)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    errno: -4048,
+    code: 'EPERM',
+    syscall: 'symlink',
+    path: '..\\outside\\file.txt',
+    dest: 'C:\\Users\\USER\\AppData\\Local\\Temp\\edict-ranges-dW3Gtx\\project\\sources\\link.txt'
+  }
+
+test at test\schedule.test.mjs:146:1
+✖ native adapter forwards structured deps, parent and literal task text without shell interpretation (60.6763ms)
+  AssertionError [ERR_ASSERTION]: file:///C:/Users/USER/edict-orca/src/orca.mjs:52
+    if (result.error) throw new Error(`${command} ${args.slice(0, 2).join(' ')}：${result.error.message}；沒有改用其他 Orca 入口，也沒有重試`);
+                            ^
+
+  Error: C:\Users\USER\AppData\Local\Temp\edict-ranges-OKYNfy\native adapter.mjs orchestration worker-start：spawnSync C:\Users\USER\AppData\Local\Temp\edict-ranges-OKYNfy\native adapter.mjs EFTYPE；沒有改用其他 Orca 入口，也沒有重試
+      at runOrca (file:///C:/Users/USER/edict-orca/src/orca.mjs:52:27)
+      at NativeRuntime.call (file:///C:/Users/USER/edict-orca/src/native.mjs:18:20)
+      at NativeRuntime.start (file:///C:/Users/USER/edict-orca/src/native.mjs:108:23)
+      at file:///C:/Users/USER/AppData/Local/Temp/edict-ranges-OKYNfy/project/[eval1]:1:113
+      at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+      at async node:internal/modules/esm/loader:223:26
+      at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:220:20)
+      at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+  Node.js v24.21.0
+
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/schedule.test.mjs:152:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\schedule.test.mjs:173:1
+✖ native message adapter keeps target, Run and literal body without replacement model arguments (56.3037ms)
+  AssertionError [ERR_ASSERTION]: file:///C:/Users/USER/edict-orca/src/orca.mjs:52
+    if (result.error) throw new Error(`${command} ${args.slice(0, 2).join(' ')}：${result.error.message}；沒有改用其他 Orca 入口，也沒有重試`);
+                            ^
+
+  Error: C:\Users\USER\AppData\Local\Temp\edict-ranges-g8vZ20\message adapter.mjs orchestration send：spawnSync C:\Users\USER\AppData\Local\Temp\edict-ranges-g8vZ20\message adapter.mjs EFTYPE；沒有改用其他 Orca 入口，也沒有重試
+      at runOrca (file:///C:/Users/USER/edict-orca/src/orca.mjs:52:27)
+      at NativeRuntime.call (file:///C:/Users/USER/edict-orca/src/native.mjs:18:20)
+      at NativeRuntime.send (file:///C:/Users/USER/edict-orca/src/native.mjs:155:23)
+      at file:///C:/Users/USER/AppData/Local/Temp/edict-ranges-g8vZ20/project/[eval1]:1:135
+      at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+      at async node:internal/modules/esm/loader:223:26
+      at async ModuleLoader.executeModuleJob (node:internal/modules/esm/loader:220:20)
+      at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+  Node.js v24.21.0
+
+
+  1 !== 0
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/schedule.test.mjs:179:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\session.test.mjs:235:1
+✖ install never modifies agent settings or hooks and enables no sessions (3.2838ms)
+  Error: EPERM: operation not permitted, symlink 'C:\Users\USER\edict-orca\skills\edict' -> 'C:\Users\USER\AppData\Local\Temp\edict-session-I5IHFY\user\.agents\skills\edict'
+      at Object.symlinkSync (node:fs:1937:11)
+      at install (file:///C:/Users/USER/edict-orca/src/install.mjs:60:8)
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/session.test.mjs:241:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    errno: -4048,
+    code: 'EPERM',
+    syscall: 'symlink',
+    path: 'C:\\Users\\USER\\edict-orca\\skills\\edict',
+    dest: 'C:\\Users\\USER\\AppData\\Local\\Temp\\edict-session-I5IHFY\\user\\.agents\\skills\\edict'
+  }
+
+test at test\session.test.mjs:263:1
+✖ POSIX hook paths use shell quoting rather than JSON quoting (1.5967ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + undefined
+  - "/tmp/path ' with $() `quotes`"
+
+      at TestContext.<anonymous> (file:///C:/Users/USER/edict-orca/test/session.test.mjs:266:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: "/tmp/path ' with $() `quotes`",
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

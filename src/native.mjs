@@ -98,6 +98,23 @@ export class NativeRuntime {
     }
     return dispatch;
   }
+  // Read-only accounting across Runs; this never grants the caller a Run identity.
+  capacityEvidence(runId, operation) {
+    if (!validId(operation.dispatchId) || !validId(operation.taskId)) return { ended: false, reason: 'missing-identity' };
+    const data = this.call(['orchestration', 'worker-show', '--dispatch', operation.dispatchId]);
+    const d = data?.dispatch, w = data?.worker, p = data?.projection;
+    if (d?.id !== operation.dispatchId || d.runId !== runId || d.taskId !== operation.taskId ||
+        !validId(d.assigneeHandle) || w?.dispatchId !== d.id || w.agentTerminalHandle !== d.assigneeHandle ||
+        p?.dispatchId !== d.id || p.runId !== runId || p.taskId !== d.taskId) {
+      return { ended: false, reason: 'identity-unverified' };
+    }
+    // Missing is an explicit native terminal observation, not an inference from unverifiable liveness.
+    if (data.observation?.status === 'missing' && d.hostScope?.kind === 'local') return { ended: true, reason: 'terminal-missing' };
+    if (p.liveness?.verdict === 'exited') return { ended: true, reason: 'execution-exited' };
+    if (data.terminalResource?.releaseState === 'released' || data.terminalResource?.ownershipState === 'released') return { ended: true, reason: 'terminal-released' };
+    if (['completed', 'succeeded', 'stopped'].includes(w.state) && w.stage === 'settled') return { ended: true, reason: 'execution-settled' };
+    return { ended: false, reason: 'execution-unconfirmed' };
+  }
   start(runId, settings, spec, options, requestId) {
     const args = ['orchestration', 'worker-start', '--run', runId, '--spec-file', '-', '--worktree', options.worktree || 'current', '--agent', settings.agent, '--task-title', options.title, '--retry-request', requestId];
     if (settings.model) args.push('--model', settings.model);

@@ -55,6 +55,91 @@ function fixture(t) {
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
 
+for (const status of ['ended', 'running', 'unknown', 'unavailable']) {
+  test(`admission accounts for other Run members with ${status} evidence`, t => {
+    const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
+    const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const old = structuredClone(db.runs['run-test']); old.id = 'old-run';
+    old.operations = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [i, {
+      id: `old-${i}`, memberId: `old-member-${i}`, runId: old.id, state: 'accepted', position: 'head',
+    }]));
+    db.runs[old.id] = old;
+    fs.writeFileSync(file, JSON.stringify(db));
+    f.runtime.capacityEvidence = (id) => {
+      assert.equal(id, old.id);
+      if (status === 'unavailable') throw new Error('native unavailable');
+      return { ended: status === 'ended' };
+    };
+    if (status === 'ended') assert.equal(f.launch().confirmed, true);
+    else assert.throws(() => f.launch(), /派工資源已滿/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).runs[old.id], old);
+  });
+}
+
+function addOtherRun(f, count = 16) {
+  const file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+  db.runs.other = { ...structuredClone(db.runs['run-test']), id: 'other', operations: Object.fromEntries(Array.from({ length: count }, (_, i) => [i, {
+    id: `other-${i}`, memberId: `other-${i}`, dispatchId: `dispatch-other-${i}`, taskId: `task-other-${i}`, runId: 'other', position: 'head', state: 'accepted',
+  }])) };
+  fs.writeFileSync(file, JSON.stringify(db));
+  return file;
+}
+
+for (const action of ['launch', 'replace', 'message']) {
+  test(`${action} queries capacity only outside workflow.lock and reuses ended cache`, t => {
+    const f = fixture(t);
+    if (action === 'replace') {
+      f.runtime.rows.forEach(row => { row.state = 'succeeded'; });
+      f.w.sync('run-test');
+      f.root();
+    } else if (action === 'message') f.as(f.zhongshu);
+    addOtherRun(f);
+    let queries = 0, queriedWhileLocked = false;
+    f.runtime.capacityEvidence = () => {
+      queries++;
+      queriedWhileLocked ||= fs.existsSync(path.join(process.env.EDICT_HOME, 'workflow.lock'));
+      return { ended: true, reason: 'terminal-missing' };
+    };
+    if (action === 'launch') {
+      f.launch('W-001', { reads: ['src/a'], writes: ['src/a'] });
+      f.launch('W-001', { reads: ['src/b'], writes: ['src/b'] });
+    } else if (action === 'replace') {
+      f.w.replace('run-test', f.zhongshu.id, { spec: 'Continue planning' });
+      f.w.launch('run-test', 'zhongshu', 'head', undefined, { spec: 'Reuse existing member' });
+    } else {
+      f.w.message('run-test', f.menxia.id, 'W-001', 'Review the plan', undefined, 1);
+      f.w.message('run-test', f.menxia.id, 'W-001', 'Review the plan again', undefined, 1);
+    }
+    assert.equal(queriedWhileLocked, false);
+    assert.equal(queries, 16);
+    assert.equal(fs.readdirSync(path.join(process.env.EDICT_HOME, 'capacity-ended')).length, 16);
+  });
+}
+
+test('operations appearing after the capacity snapshot remain counted during admission', t => {
+  const f = fixture(t), file = addOtherRun(f, 1);
+  let queries = 0;
+  f.runtime.capacityEvidence = () => {
+    queries++;
+    const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (let i = 1; i <= 16; i++) db.runs.other.operations[i] = {
+      id: `new-${i}`, memberId: `new-${i}`, dispatchId: `new-dispatch-${i}`, taskId: `new-task-${i}`, runId: 'other', position: 'head', state: 'accepted',
+    };
+    fs.writeFileSync(file, JSON.stringify(db));
+    return { ended: true, reason: 'terminal-missing' };
+  };
+  assert.throws(() => f.launch(), /派工資源已滿/);
+  assert.equal(queries, 1);
+});
+
+test('current Run executor limit is unchanged even if native capacity evidence says ended', t => {
+  const f = fixture(t);
+  f.runtime.capacityEvidence = () => { throw new Error('current Run must not be queried'); };
+  for (const name of ['one', 'two', 'three']) f.launch('W-001', { reads: [`src/${name}`], writes: [`src/${name}`] });
+  assert.throws(() => f.launch('W-001', { reads: ['src/four'], writes: ['src/four'] }), /派工資源已滿/);
+});
+
 test('delegation names and status expose all subordinate assignments and cross-worktree locations', t => {
   const f = fixture(t);
   const first = f.launch('W-001', { title: '冰霜特效', reads: ['src/frost'], writes: ['src/frost'], worktree: `path:${f.project}` });
