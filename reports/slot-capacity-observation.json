@@ -1,0 +1,219 @@
+{
+  "status": "diagnostic-only-not-merged",
+  "cwd": "C:\\Users\\USER\\orca\\workspaces\\vampire-web\\urchin",
+  "currentRunId": "run_196d0722f532",
+  "runs": [
+    {
+      "runId": "run_6541c35f183b",
+      "before": {
+        "members": 5,
+        "executors": 0
+      },
+      "after": {
+        "members": 0,
+        "executors": 0
+      }
+    },
+    {
+      "runId": "run_04be5fe4954f",
+      "before": {
+        "members": 3,
+        "executors": 0
+      },
+      "after": {
+        "members": 1,
+        "executors": 0
+      }
+    },
+    {
+      "runId": "run_196d0722f532",
+      "before": {
+        "members": 1,
+        "executors": 0
+      },
+      "after": {
+        "members": 1,
+        "executors": 0
+      }
+    }
+  ],
+  "details": [
+    {
+      "runId": "run_04be5fe4954f",
+      "operationId": "5b50600e-8c9e-47e6-a30b-1dfcdc6f5357",
+      "memberId": "85633ffe-3530-480b-808a-adbd8d047f0f",
+      "dispatchId": "ctx_556dc27b0dda",
+      "taskId": "task_34c96b55c3ca",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_04be5fe4954f",
+      "operationId": "17cfb8cb-db02-4051-b35f-d172f93ab7d5",
+      "memberId": "7badcb1a-1017-417e-9d48-f95e09850ea5",
+      "dispatchId": "ctx_52cfae2e8d81",
+      "taskId": "task_ac53b1919239",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_04be5fe4954f",
+      "operationId": "3aa8a15d-b26f-49df-a7bc-d13e940bc335",
+      "memberId": "0363db08-7923-4c66-a51a-b634d5471bc1",
+      "dispatchId": null,
+      "taskId": null,
+      "evidence": {
+        "ended": false,
+        "reason": "missing-identity"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "af1067b1-c655-488c-b34a-b0d97c7e08a3",
+      "memberId": "aa3d46d8-6f4c-41bb-afe3-ffd6eed13d35",
+      "dispatchId": "ctx_c6dc395a68fd",
+      "taskId": "task_b9689e5ac82a",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "4dbe0dcf-596d-48fb-a405-3b439da65c7f",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_ebbdfd2282cf",
+      "taskId": "task_a1d5da8316b0",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "ce3dc479-28ab-4b56-8de7-79219916f7bc",
+      "memberId": "aa3d46d8-6f4c-41bb-afe3-ffd6eed13d35",
+      "dispatchId": "ctx_5da77f95bd94",
+      "taskId": "task_6afe5cba5f00",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "0b22685c-f645-4cb7-843b-6d0cd20eea96",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_9400afcbf629",
+      "taskId": "task_9da211cc1f18",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "2d6913fe-1f7a-43c2-b4d3-9874119fdf11",
+      "memberId": "b74902e2-fc98-4fa5-a411-fbda7d091a82",
+      "dispatchId": "ctx_1132956d45a1",
+      "taskId": "task_e9aaa2e7153d",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "af5e40f1-9319-4430-95fa-73c9409afe1f",
+      "memberId": "1447713a-6e2b-459c-9830-d9ff38c0d03b",
+      "dispatchId": "ctx_ffcd4982430f",
+      "taskId": "task_345df8144530",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "5047df4d-374e-470d-a49c-285f08077f1b",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_b8b18e7a8249",
+      "taskId": "task_b41515737222",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "b82fe856-0b34-44ac-92ad-b4f6d4587244",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_fd713ad60f29",
+      "taskId": "task_bffd647a1c14",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d66a9ded-a309-4be6-9b38-be760ef66559",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_a741eb430a02",
+      "taskId": "task_e00f4076ac90",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "16e4d37c-867a-4932-b3c6-fe172d38e582",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_bd168caff35a",
+      "taskId": "task_9a005569665c",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "c70af3b8-9c87-49f6-b529-966435942395",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_877272df2afb",
+      "taskId": "task_42e5bcfcecd9",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d6de5526-a738-441a-834b-8479a1b8df16",
+      "memberId": "af50ca1a-6608-4feb-bcce-96a5ccaa6dbc",
+      "dispatchId": "ctx_4c1077f46b82",
+      "taskId": "task_8d41a129b522",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    },
+    {
+      "runId": "run_6541c35f183b",
+      "operationId": "d5662e03-1496-4f7c-b72f-c3d8c083c268",
+      "memberId": "cc148b98-1b81-4712-b44b-92e3aab75197",
+      "dispatchId": "ctx_9716b7f4f97b",
+      "taskId": "task_79ea914c2c34",
+      "evidence": {
+        "ended": true,
+        "reason": "terminal-missing"
+      }
+    }
+  ],
+  "workflowUnchanged": true
+}

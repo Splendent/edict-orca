@@ -10,7 +10,7 @@ root 先用 run open 建立 Run，再以無 work 的 team ensure 建立中書、
 
 頭領只能建立有權管理的角色。六部頭領管理本部 executor，executor 不得再派工。指定 work 的 ensure、delegate 與 team send 均在 JSON 帶目前 generation。所有實作及業務續辦需有效核可，委派 reads／writes／resources 不能超過需求及方案。方案 dependencies 是其他工作項目 ID，未 Done 前不得啟動依賴它的工作。
 
-目前共用 EDICT_HOME 的工作紀錄對在途成員計算名額，最多 3 位 executor、16 位在途成員；這不是整台主機、其他 EDICT_HOME 或繞過 Edict 的原生硬上限。收到事件後單次 sync 更新原生事實，避免已結束操作仍占額度。沒有背景排程器會自動重跑被拒絕的派工；由頭領在相應事件到達後重新核對准入，不重送結果未知的操作。
+目前共用 EDICT_HOME 的工作紀錄對在途成員計算名額，最多 3 位 executor、16 位在途成員；這不是整台主機、其他 EDICT_HOME 或繞過 Edict 的原生硬上限。准入時只讀查詢其他 Run 的 worker-show，核對 Dispatch、Run、Task 與 assignee 後，僅將原生明確確認終端不存在（本機 observation.status=missing）、執行退出、終端已釋放或執行成功／完成／停止且 settled 的操作排除於名額及範圍占用；不改寫其他 Run 紀錄，也不取得其身分。缺少原生身分、查詢失敗、unknown 或 unverifiable 且無上述明確證據時照舊計入。本 Run 的在途計算不變，收到事件後單次 sync 更新原生事實。沒有背景排程器會自動重跑被拒絕的派工；由頭領在相應事件到達後重新核對准入，不重送結果未知的操作。
 
 同工作樹互不衝突的讀寫可並行；讀與寫、寫與寫重疊或工具互斥需等待。未知範圍保守限制。範圍檢查涵蓋實體路徑、目錄與連結，不是 OS 存取沙箱；不得藉更換連結越出授權。
 
