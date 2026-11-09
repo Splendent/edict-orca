@@ -248,8 +248,49 @@ function resourceConflict(mine, theirs) {
   const shared = mine.filter(x => theirs.includes(x));
   return shared.length ? `共用工具資源 ${shared.join(', ')}` : null;
 }
-function claim(db, candidate, ignoreMember) {
-  const active = Object.values(db.runs).flatMap(r => outstanding(r)).filter(x => x.memberId !== ignoreMember);
+const capacityKey = (runId, op) => JSON.stringify([runId, op.id, op.dispatchId ?? null, op.taskId ?? null, op.memberId]);
+
+// Prepare read-only native evidence before taking workflow.lock. Each immutable cache entry
+// has its own file so concurrent commands cannot overwrite another command's discoveries.
+export function prepareCapacityEvidence(db, currentRunId, runtime, cacheDir = path.join(home(), 'capacity-ended')) {
+  const results = new Map();
+  for (const run of Object.values(db.runs)) {
+    if (run.id === currentRunId) continue;
+    for (const op of outstanding(run)) {
+      const key = capacityKey(run.id, op), file = path.join(cacheDir, hash(key) + '.json');
+      let evidence;
+      try {
+        const cached = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (cached.key === key && cached.evidence?.ended === true) evidence = cached.evidence;
+      } catch { /* Missing or unreadable cache entries require fresh evidence. */ }
+      if (!evidence) {
+        try { evidence = runtime.capacityEvidence(run.id, op); }
+        catch { evidence = { ended: false, reason: 'query-unavailable' }; }
+        if (evidence?.ended === true) {
+          try { atomicJSON(file, { key, evidence }); }
+          catch { /* A cache failure must not turn confirmed evidence into an admission failure. */ }
+        }
+      }
+      results.set(key, evidence);
+    }
+  }
+  return results;
+}
+
+// Pure accounting: operations absent from the pre-lock snapshot remain counted.
+export function capacityOperations(db, currentRunId, evidence = new Map()) {
+  const active = [], excluded = [];
+  for (const run of Object.values(db.runs)) {
+    for (const op of outstanding(run)) {
+      const proof = run.id === currentRunId ? null : evidence.get(capacityKey(run.id, op));
+      if (proof?.ended === true) excluded.push({ runId: run.id, operationId: op.id, evidence: proof });
+      else active.push(op);
+    }
+  }
+  return { active, excluded };
+}
+function claim(db, candidate, ignoreMember, evidence) {
+  const active = capacityOperations(db, candidate.runId, evidence).active.filter(x => x.memberId !== ignoreMember);
   const executors = new Set(active.filter(x => x.position === 'executor').map(x => x.memberId));
   if (candidate.position === 'executor' && executors.size >= 3 || new Set(active.map(x => x.memberId)).size >= 16) fail('目前派工資源已滿；沒有建立新代理');
   const conflicts = active.map(op => {
@@ -327,13 +368,14 @@ function finalizeReceipt(run, operationId, receipt) {
 export class Workflow {
   constructor(session, runtime = new NativeRuntime()) { this.session = session; this.runtime = runtime; }
   run(runId) { return getRun(readDb(), this.session, runId); }
-  mutate(runId, fn, { active = true } = {}) {
+  mutate(runId, fn, { active = true, capacity = false } = {}) {
     const identity = this.runtime.identity(runId);
+    const evidence = capacity ? prepareCapacityEvidence(readDb(), runId, this.runtime) : new Map();
     return transaction(db => {
       const run = getRun(db, this.session, runId), actor = memberFor(run, identity);
       if (run.archived) fail('此 Run 已在交棒時封存，不再接受變更；請在接手對話使用目前的 Run');
       if (active) requireActive(this.session);
-      return fn(run, actor, db);
+      return fn(run, actor, db, evidence);
     });
   }
   // The current coordinator hands its root duties to another conversation. The packet carries a one-time token; the
@@ -536,7 +578,7 @@ export class Workflow {
     });
   }
   prepare(runId, role, position, work, data) {
-    return this.mutate(runId, (run, actor, db) => {
+    return this.mutate(runId, (run, actor, db, evidence) => {
       isHead(actor); const item = work ? itemFor(run, work) : null; controlAllowed(run, item);
       if (item) generationFor(item, data.generation);
       if (!ROLES[role] || !['head', 'executor'].includes(position)) fail('角色或職位無效');
@@ -571,7 +613,7 @@ export class Workflow {
       if (!['current', 'new-child'].includes(worktree) && !worktree.startsWith('path:')) fail('工作樹必須為 current、new-child 或既有 path');
       const root = worktree === 'current' ? run.project : worktree.startsWith('path:') ? worktree.slice(5) : null;
       const shape = { physicalReads: mergeGeometry(geometry(root, reads), extraGeometry(extraReads)), physicalWrites: geometry(root, writes) };
-      claim(db, { runId, position, reads, extraReads, writes, resources, ...shape });
+      claim(db, { runId, position, reads, extraReads, writes, resources, ...shape }, undefined, evidence);
       const member = { id: randomUUID(), role, position, title: position === 'head' ? ROLES[role].head : ROLES[role].executor,
         supervisor: actor.id, scopes: role === 'zhongshu' && position === 'head' ? ['*'] : work ? [work] : [], dispatches: [], dispatchId: null, generation: 1 };
       const session = requireActive(this.session), settings = resolveSettings(session.config, role, position);
@@ -582,7 +624,7 @@ export class Workflow {
       run.members[member.id] = member; run.operations[op.id] = op;
       if (op.phase === 'implementation') item.authors.push(member.id);
       return { operation: op, member };
-    });
+    }, { capacity: true });
   }
   launch(runId, role, position, work, data) {
     const prepared = this.prepare(runId, role, position, work, data);
@@ -592,7 +634,7 @@ export class Workflow {
   // A supervisor hands a settled member's assignment to a new native worker that uses the current role settings,
   // for example after config set switched the agent or model, or when the member's context is exhausted.
   replace(runId, memberId, data) {
-    const prepared = this.mutate(runId, (run, actor, db) => {
+    const prepared = this.mutate(runId, (run, actor, db, evidence) => {
       isHead(actor);
       const target = run.members[memberId];
       if (!target || target.id === 'root' || !['head', 'executor'].includes(target.position)) fail('找不到可換手的團隊成員');
@@ -614,7 +656,7 @@ export class Workflow {
         if ((item.plan?.dependencies || []).some(id => !run.items[id].done)) fail('前置工作尚未結案；未送出原生派工');
       }
       const scope = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], worktree: 'current', root: run.project, physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
-      claim(db, { runId, position: target.position, reads: scope.reads, extraReads: scope.extraReads || [], writes: scope.writes, resources: scope.resources, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites }, target.id);
+      claim(db, { runId, position: target.position, reads: scope.reads, extraReads: scope.extraReads || [], writes: scope.writes, resources: scope.resources, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites }, target.id, evidence);
       const session = requireActive(this.session), settings = resolveSettings(session.config, target.role, target.position);
       const member = { id: randomUUID(), role: target.role, position: target.position, title: target.title, supervisor: target.supervisor,
         scopes: [...target.scopes], dispatches: [], dispatchId: null, generation: 1, replaces: target.id };
@@ -628,7 +670,7 @@ export class Workflow {
       if (op.phase === 'implementation') item.authors.push(member.id);
       run.history.push({ action: 'replace', member: target.id, by: member.id, operation: op.id, settings, sequence: db.sequence, actor: actor.id, at: new Date().toISOString() });
       return { operation: op, member };
-    });
+    }, { capacity: true });
     return this.startPrepared(runId, prepared);
   }
   startPrepared(runId, prepared) {
@@ -740,7 +782,7 @@ export class Workflow {
   }
   message(runId, targetId, work, body, forwardId, expectedGeneration, kind = 'handoff') {
     if (!['handoff', 'report'].includes(kind)) fail('訊息種類必須為 handoff 或 report');
-    const prepared = this.mutate(runId, (run, actor, db) => {
+    const prepared = this.mutate(runId, (run, actor, db, evidence) => {
       isHead(actor); const target = run.members[targetId];
       if (!target?.dispatchId) fail('目標成員尚未取得原生 Dispatch');
       if (target.retired) fail(target.replacedBy ? `目標成員已換手給 ${target.replacedBy}；改送新成員` : '目標成員已停用');
@@ -768,7 +810,7 @@ export class Workflow {
       if (target.position === 'executor' && previous.state !== 'settled') fail('實作代理仍在執行；先處理其原生回報並 sync，再續辦有界修正');
       if (Object.values(run.operations).some(x => x.memberId === target.id && ['unknown', 'submitted'].includes(x.state))) fail('目標仍有未確認操作，不能再次傳送');
       const claims = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
-      claim(db, { ...claims, runId, position: target.position }, target.id);
+      claim(db, { ...claims, runId, position: target.position }, target.id, evidence);
       const record = { id: randomUUID(), requestId: randomUUID(), kind, from: source.id, to: targetId, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0, body: text(body, 'body'), forwardOf: forwardId || null, state: 'submitted', sequence: ++db.sequence };
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
@@ -779,7 +821,7 @@ export class Workflow {
         state: 'submitted', sequence: record.sequence, result: null, receipt: null };
       if (item && target.position === 'executor') item.result = null;
       return { record, target };
-    }, { active: kind !== 'report' });
+    }, { active: kind !== 'report', capacity: true });
     let receipt;
     try { receipt = this.runtime.send(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId); }
     catch (error) {

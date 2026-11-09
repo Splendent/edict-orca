@@ -1,0 +1,61 @@
+{
+  "baseline": {
+    "file": "slot-capacity-v2-baseline-tests.txt",
+    "failures": [
+      "authorized team creation delivers literal stdin, argv, identity and cwd",
+      "native adapter preserves child-worktree selectors and names as literal argv",
+      "failed authorized start preserves the native receipt and is not retried",
+      "workflow receipt saving is independent from a contended session index",
+      "incomplete and wrong-Run receipts remain durable unknown operations without retries",
+      "doctor checks interface and runtime without dispatch or consuming inbox",
+      "doctor rejects missing dependency and continuation capabilities before runtime access",
+      "doctor preserves unsupported-command failure and does not claim success",
+      "cli: export writes a private packet without printing the token; accept in another conversation takes over",
+      "native calls request full records only for orchestration commands",
+      "an unverified start that still returns the Task/Dispatch pair is kept as a receipt",
+      "symbolic links to existing and future files cannot bypass conflicts",
+      "directory scopes include linked descendants and hard-linked files",
+      "native adapter forwards structured deps, parent and literal task text without shell interpretation",
+      "native message adapter keeps target, Run and literal body without replacement model arguments",
+      "install never modifies agent settings or hooks and enables no sessions",
+      "POSIX hook paths use shell quoting rather than JSON quoting"
+    ],
+    "tests": 205,
+    "pass": 188,
+    "fail": 17
+  },
+  "modified": {
+    "file": "slot-capacity-v2-tests.txt",
+    "failures": [
+      "authorized team creation delivers literal stdin, argv, identity and cwd",
+      "native adapter preserves child-worktree selectors and names as literal argv",
+      "failed authorized start preserves the native receipt and is not retried",
+      "workflow receipt saving is independent from a contended session index",
+      "incomplete and wrong-Run receipts remain durable unknown operations without retries",
+      "doctor checks interface and runtime without dispatch or consuming inbox",
+      "doctor rejects missing dependency and continuation capabilities before runtime access",
+      "doctor preserves unsupported-command failure and does not claim success",
+      "cli: export writes a private packet without printing the token; accept in another conversation takes over",
+      "native calls request full records only for orchestration commands",
+      "an unverified start that still returns the Task/Dispatch pair is kept as a receipt",
+      "symbolic links to existing and future files cannot bypass conflicts",
+      "directory scopes include linked descendants and hard-linked files",
+      "native adapter forwards structured deps, parent and literal task text without shell interpretation",
+      "native message adapter keeps target, Run and literal body without replacement model arguments",
+      "install never modifies agent settings or hooks and enables no sessions",
+      "POSIX hook paths use shell quoting rather than JSON quoting"
+    ],
+    "tests": 230,
+    "pass": 213,
+    "fail": 17
+  },
+  "related": {
+    "file": "slot-capacity-v2-related-tests.txt",
+    "failures": [],
+    "tests": 74,
+    "pass": 74,
+    "fail": 0
+  },
+  "newFailures": [],
+  "missingFailures": []
+}
