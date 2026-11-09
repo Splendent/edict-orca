@@ -1,0 +1,172 @@
+{
+  "date": "2026-11-09",
+  "baselineCommit": "d6e5c2e",
+  "retry": {
+    "codes": [
+      "EPERM",
+      "EACCES",
+      "EBUSY"
+    ],
+    "budgetMs": 2000,
+    "initialDelayMs": 20,
+    "multiplier": 2,
+    "maxDelayMs": 250,
+    "clock": "performance.now",
+    "exhaustion": "Retain original destination and temp file; preserve error code and include both paths",
+    "lock": "Synchronous retry stays inside the existing transaction; no lock release/reacquisition or extra wait on success. Transient failure can add up to 2000ms of waiting while retaining the lock."
+  },
+  "serialization": "JSON.stringify(value) plus one trailing newline; no data fields removed",
+  "benchmark": {
+    "source": "C:/Users/USER/.config/edict-v2/workflow.json",
+    "snapshotBytes": 173538464,
+    "snapshotSha256": "bf830a948c95da73d0eda68db01f1b467596ca4775c393c6d68eb0884175f0b8",
+    "node": "v24.21.0",
+    "measurements": {
+      "before": [
+        {
+          "writeMs": 937.9542,
+          "bytes": 173538464
+        },
+        {
+          "writeMs": 809.0729000000001,
+          "bytes": 173538464
+        },
+        {
+          "writeMs": 623.6687999999995,
+          "bytes": 173538464
+        },
+        {
+          "writeMs": 703.4984000000004,
+          "bytes": 173538464
+        },
+        {
+          "writeMs": 674.7675999999992,
+          "bytes": 173538464
+        }
+      ],
+      "after": [
+        {
+          "writeMs": 344.94280000000026,
+          "bytes": 69362939
+        },
+        {
+          "writeMs": 310.4992000000002,
+          "bytes": 69362939
+        },
+        {
+          "writeMs": 311.0138999999999,
+          "bytes": 69362939
+        },
+        {
+          "writeMs": 284.54069999999956,
+          "bytes": 69362939
+        },
+        {
+          "writeMs": 291.8177999999989,
+          "bytes": 69362939
+        }
+      ]
+    },
+    "before": {
+      "bytes": 173538464,
+      "medianWriteMs": 703.4984000000004
+    },
+    "after": {
+      "bytes": 69362939,
+      "medianWriteMs": 310.4992000000002
+    },
+    "sizeReductionPercent": 60.030221887869196
+  },
+  "benchmarkMethod": "One read-only snapshot of production workflow.json; all writes under temporary EDICT_HOME with workflow.lock held. Alternate before/after order for five writes each. Timed only atomicJSON (serialization, write, rename), excluding snapshot copy, DB parsing, and validation. Parsed all outputs and compared canonical JSON to the snapshot. Baseline atomicJSON loaded from git main:src/session.mjs, with imports redirected to local files; no injected rename failures in benchmark. Timings describe these local samples, not a guarantee for all filesystem contention.",
+  "tests": {
+    "baseline": {
+      "failures": [
+        "POSIX hook paths use shell quoting rather than JSON quoting",
+        "an unverified start that still returns the Task/Dispatch pair is kept as a receipt",
+        "authorized team creation delivers literal stdin, argv, identity and cwd",
+        "cli: export writes a private packet without printing the token; accept in another conversation takes over",
+        "directory scopes include linked descendants and hard-linked files",
+        "doctor checks interface and runtime without dispatch or consuming inbox",
+        "doctor preserves unsupported-command failure and does not claim success",
+        "doctor rejects missing dependency and continuation capabilities before runtime access",
+        "failed authorized start preserves the native receipt and is not retried",
+        "incomplete and wrong-Run receipts remain durable unknown operations without retries",
+        "install never modifies agent settings or hooks and enables no sessions",
+        "native adapter forwards structured deps, parent and literal task text without shell interpretation",
+        "native adapter preserves child-worktree selectors and names as literal argv",
+        "native calls request full records only for orchestration commands",
+        "native message adapter keeps target, Run and literal body without replacement model arguments",
+        "symbolic links to existing and future files cannot bypass conflicts",
+        "workflow receipt saving is independent from a contended session index"
+      ],
+      "counts": {
+        "tests": 247,
+        "pass": 230,
+        "fail": 17,
+        "cancelled": 0,
+        "skipped": 0,
+        "duration_ms": 23619.4163
+      }
+    },
+    "changed": {
+      "failures": [
+        "POSIX hook paths use shell quoting rather than JSON quoting",
+        "an unverified start that still returns the Task/Dispatch pair is kept as a receipt",
+        "authorized team creation delivers literal stdin, argv, identity and cwd",
+        "cli: export writes a private packet without printing the token; accept in another conversation takes over",
+        "directory scopes include linked descendants and hard-linked files",
+        "doctor checks interface and runtime without dispatch or consuming inbox",
+        "doctor preserves unsupported-command failure and does not claim success",
+        "doctor rejects missing dependency and continuation capabilities before runtime access",
+        "failed authorized start preserves the native receipt and is not retried",
+        "incomplete and wrong-Run receipts remain durable unknown operations without retries",
+        "install never modifies agent settings or hooks and enables no sessions",
+        "native adapter forwards structured deps, parent and literal task text without shell interpretation",
+        "native adapter preserves child-worktree selectors and names as literal argv",
+        "native calls request full records only for orchestration commands",
+        "native message adapter keeps target, Run and literal body without replacement model arguments",
+        "symbolic links to existing and future files cannot bypass conflicts",
+        "workflow receipt saving is independent from a contended session index"
+      ],
+      "counts": {
+        "tests": 255,
+        "pass": 238,
+        "fail": 17,
+        "cancelled": 0,
+        "skipped": 0,
+        "duration_ms": 23588.5698
+      }
+    },
+    "newFailures": [],
+    "removedFailures": []
+  },
+  "validation": {
+    "syntaxCheck": "PASS: npm run check, 28 JavaScript files",
+    "whitespace": "PASS: git diff --check",
+    "regressionComparison": "PASS: same 17 baseline failures, 8 additional passing tests",
+    "fullSuite": "FAIL: existing 17 environment failures remain; exit 1 on both baseline and changed code"
+  },
+  "largeFields": {
+    "conclusion": "physicalReads/physicalWrites cannot safely be omitted and recalculated with the current behavior; independent immutable files are conditionally feasible but require persistence/read-path changes and crash-recovery tests. No field removal, migration, or old Run relocation implemented.",
+    "physicalGeometry": "geometry records file device/inode identities and ancestor routes, including symlink and hard-link relationships, at claim time. Recomputing later may observe changed, removed, or rebound paths and requires filesystem traversal during admission. claim reads saved geometry for in-flight operations; blindly dropping it breaks overlap checks. Recomputing on every mutation may also increase lock duration.",
+    "results": "Operation results and item result bundles participate in deliveryComplete, independent acceptance, evidence checks and digests. They are durable evidence rather than disposable cached values.",
+    "recommendation": "For future writes, evaluate immutable content-addressed geometry/result blobs with validated references and transparent hydration. Keep existing inline records readable without moving or deleting old Runs. Persist blobs before publishing references; test interrupted writes, missing/corrupt blobs, concurrent reads, restart recovery, and unchanged range/digest behavior before adopting. Current tests do not establish those guarantees.",
+    "references": [
+      "src/ranges.mjs:5-65",
+      "src/workflow.mjs:293-310",
+      "src/workflow.mjs:568-579",
+      "src/workflow.mjs:623-624",
+      "src/workflow.mjs:666-674",
+      "src/workflow.mjs:729",
+      "src/workflow.mjs:760-775"
+    ]
+  },
+  "sourceReferences": [
+    "src/session.mjs:19-48",
+    "src/workflow.mjs:153-173",
+    "test/atomic-json.test.mjs:1-78",
+    "test/workflow.test.mjs:59-78"
+  ],
+  "scope": "No production EDICT_HOME writes, worker operations, push, publication, or version changes. Existing untracked slot-capacity reports preserved.",
+  "rawEvidenceDirectory": "C:\\Users\\USER\\AppData\\Local\\Temp\\edict-write-retry-evidence"
+}

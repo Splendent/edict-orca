@@ -20,9 +20,27 @@ export function atomicJSON(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
-    fs.writeFileSync(temp, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-    fs.renameSync(temp, file);
-  } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
+    fs.writeFileSync(temp, JSON.stringify(value) + '\n', { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (fs.existsSync(temp)) fs.unlinkSync(temp);
+    throw error;
+  }
+  const deadline = performance.now() + 2000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  let delay = 20;
+  for (;;) {
+    try { fs.renameSync(temp, file); return; }
+    catch (error) {
+      const remaining = deadline - performance.now();
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || remaining <= 0) {
+        error.message += `；無法原子寫入 ${file}，暫存檔保留於 ${temp}，未刪除原檔`;
+        throw error;
+      }
+      // The caller keeps its lock throughout synchronous retries.
+      Atomics.wait(pause, 0, 0, Math.min(delay, remaining));
+      delay = Math.min(delay * 2, 250);
+    }
+  }
 }
 export function sessionFile(id) {
   sessionId(id, {});
