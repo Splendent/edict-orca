@@ -6,7 +6,8 @@ import { home, readSession, requireActive, atomicJSON, writeSession } from './se
 import { ROLES, workerSpec } from './roles.mjs';
 import { resolveSettings } from './config.mjs';
 import { geometry, mergeGeometry, overlapDetails } from './ranges.mjs';
-import { NativeRuntime } from './native.mjs';
+import { NativeRuntime, sendArgs, startArgs, preflightNative, nativeArgs } from './native.mjs';
+import { windowsCommandLength } from './orca.mjs';
 
 const departments = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -301,7 +302,7 @@ function claim(db, candidate, ignoreMember, evidence) {
   if (conflicts.length) fail(`與在途工作的檔案或工具範圍衝突：${conflicts.slice(0, 3).join('；')}${conflicts.length > 3 ? `；另有 ${conflicts.length - 3} 項` : ''}。若無實際重疊，改宣告較窄的 reads／writes 或不同的資源名稱／工作樹`);
 }
 function requiredOperations(run, item) {
-  return Object.values(run.operations).filter(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && !x.supersededBy && !['owner-required', 'forwarded'].includes(x.state));
+  return Object.values(run.operations).filter(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && !x.supersededBy && !['owner-required', 'forwarded'].includes(x.state) && !(x.operationKind === 'continuation' && x.state === 'refused' && x.rawReceipt?.error?.data?.effectsApplied === false));
 }
 function deliveryComplete(run, item) {
   const required = requiredOperations(run, item);
@@ -368,9 +369,16 @@ function finalizeReceipt(run, operationId, receipt) {
 export class Workflow {
   constructor(session, runtime = new NativeRuntime()) { this.session = session; this.runtime = runtime; }
   run(runId) { return getRun(readDb(), this.session, runId); }
-  mutate(runId, fn, { active = true, capacity = false } = {}) {
+  mutate(runId, fn, { active = true, capacity = false, preflight } = {}) {
     const identity = this.runtime.identity(runId);
     const evidence = capacity ? prepareCapacityEvidence(readDb(), runId, this.runtime) : new Map();
+    // Validate the proposed native argv against a disposable snapshot before taking the lock.
+    // The transaction still repeats all admission checks against the current database.
+    if (preflight) {
+      const db = readDb(), run = getRun(db, this.session, runId);
+      if (active) requireActive(this.session);
+      preflight(fn(run, memberFor(run, identity), db, evidence), run);
+    }
     return transaction(db => {
       const run = getRun(db, this.session, runId), actor = memberFor(run, identity);
       if (run.archived) fail('此 Run 已在交棒時封存，不再接受變更；請在接手對話使用目前的 Run');
@@ -624,7 +632,7 @@ export class Workflow {
       run.members[member.id] = member; run.operations[op.id] = op;
       if (op.phase === 'implementation') item.authors.push(member.id);
       return { operation: op, member };
-    }, { capacity: true });
+    }, { capacity: true, preflight: (prepared, run) => this.preflightStart(prepared, run) });
   }
   launch(runId, role, position, work, data) {
     const prepared = this.prepare(runId, role, position, work, data);
@@ -670,8 +678,13 @@ export class Workflow {
       if (op.phase === 'implementation') item.authors.push(member.id);
       run.history.push({ action: 'replace', member: target.id, by: member.id, operation: op.id, settings, sequence: db.sequence, actor: actor.id, at: new Date().toISOString() });
       return { operation: op, member };
-    }, { capacity: true });
+    }, { capacity: true, preflight: (prepared, run) => this.preflightStart(prepared, run) });
     return this.startPrepared(runId, prepared);
+  }
+  preflightStart(prepared, run) {
+    if (prepared.existing) return;
+    const op = prepared.operation;
+    preflightNative(startArgs(run.id, op.settings, { worktree: op.worktree, title: memberSummary(run, prepared.member).label }, op.requestId));
   }
   startPrepared(runId, prepared) {
     const op = prepared.operation;
@@ -683,6 +696,7 @@ export class Workflow {
         const run = getRun(db, this.session, runId), stored = run.operations[op.id];
         const refused = error.receipt?.ok === false && error.receipt.error?.data?.effectsApplied === false;
         stored.state = refused ? 'refused' : 'unknown'; stored.error = error.message; stored.rawReceipt = error.receipt || null;
+        if (refused) stored.effectsApplied = false;
         if (refused) run.members[stored.memberId].retired = true;
       });
       throw error;
@@ -819,17 +833,25 @@ export class Workflow {
         reads: claims.reads, extraReads: claims.extraReads || [], writes: claims.writes, resources: claims.resources, physicalReads: claims.physicalReads, physicalWrites: claims.physicalWrites,
         planDigest: item?.plan?.digest || null, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0,
         state: 'submitted', sequence: record.sequence, result: null, receipt: null };
+      const previousResult = item?.result;
       if (item && target.position === 'executor') item.result = null;
-      return { record, target };
-    }, { active: kind !== 'report', capacity: true });
+      return { record, target, previousResult };
+    }, { active: kind !== 'report', capacity: true, preflight: prepared =>
+      preflightNative(sendArgs(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId)) });
     let receipt;
     try { receipt = this.runtime.send(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId); }
     catch (error) {
       const ownerRequired = !forwardId && ownerRelayRequired(error);
+      const refused = !ownerRequired && error.receipt?.ok === false && error.receipt.error?.data?.effectsApplied === false && error.receipt.error.data.spawn?.processStarted === false;
       transaction(db => {
         const run = getRun(db, this.session, runId), record = run.messages.find(x => x.id === prepared.record.id), op = run.operations[record.id];
-        record.state = ownerRequired ? 'owner-required' : 'unknown'; record.error = error.message; record.rawReceipt = error.receipt || null;
+        record.state = ownerRequired ? 'owner-required' : refused ? 'refused' : 'unknown'; record.error = error.message; record.rawReceipt = error.receipt || null;
         op.state = record.state; op.error = error.message; op.rawReceipt = error.receipt || null;
+        if (refused) {
+          op.effectsApplied = record.effectsApplied = false;
+          if (op.work && prepared.previousResult) run.items[op.work].result = prepared.previousResult;
+          if (forwardId) run.messages.find(x => x.id === forwardId).state = 'owner-required';
+        }
       });
       if (ownerRequired) return { messageId: prepared.record.id, state: 'owner-required', next: '由原對話 team forward 原樣轉交；不重新判斷業務決定' };
       throw error;
@@ -846,10 +868,28 @@ export class Workflow {
     const run = this.run(runId), actor = memberFor(run, this.runtime.identity(runId)), op = run.operations[operationId];
     if (!op || op.actorId !== actor.id) fail('只能以原呼叫身分查核此操作；不猜測或改 ID 重送');
     const request = this.runtime.request(op.requestId);
+    const message = run.messages.find(x => x.id === operationId);
+    const legacyCommand = /^(.+) orchestration send：spawnSync \1 ENAMETOOLONG；沒有改用其他 Orca 入口，也沒有重試$/u.exec(op.error || '')?.[1];
+    const legacyTarget = run.operations[op.supersedes]?.dispatchId;
+    // Legacy runOrca errors discarded the structured spawn result. Require the exact wrapper,
+    // an absent native request, and an argv exceeding the OS hard limit, not our safety margin.
+    const legacyTooLong = process.platform === 'win32' && op.state === 'unknown' && op.operationKind === 'continuation' &&
+      !op.receipt && !op.rawReceipt && request.state === 'absent' && message?.requestId === op.requestId &&
+      message.body === op.spec && typeof message.body === 'string' &&
+      legacyCommand && validId(legacyTarget) &&
+      windowsCommandLength(legacyCommand, nativeArgs(sendArgs(runId, legacyTarget, message.body, op.requestId))) > 32767;
     const refusal = transaction(db => {
       const saved = getRun(db, this.session, runId), operation = saved.operations[operationId]; operation.recovery = request;
-      if (operation.rawReceipt?.ok === false && operation.rawReceipt.error?.data?.effectsApplied === false) {
-        operation.state = 'refused'; saved.members[operation.memberId].retired = true;
+      if (operation.rawReceipt?.ok === false && operation.rawReceipt.error?.data?.effectsApplied === false || legacyTooLong) {
+        operation.state = 'refused'; operation.effectsApplied = false;
+        if (legacyTooLong) operation.rawReceipt = { ok: false, error: { code: 'ENAMETOOLONG', data: { effectsApplied: false, proof: 'legacy-spawn-error-and-argv-over-hard-limit' } } };
+        if (operation.operationKind === 'continuation') {
+          const record = saved.messages.find(x => x.id === operationId);
+          if (record) {
+            record.state = 'refused'; record.effectsApplied = false; record.rawReceipt = operation.rawReceipt;
+            if (record.forwardOf) saved.messages.find(x => x.id === record.forwardOf).state = 'owner-required';
+          }
+        } else saved.members[operation.memberId].retired = true;
         return { operationId, state: 'refused', effectsApplied: false, request };
       }
       return null;
