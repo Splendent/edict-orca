@@ -55,34 +55,6 @@ function fixture(t) {
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
 
-for (const status of ['ended', 'running', 'unknown', 'unavailable']) {
-  test(`admission accounts for other Run members with ${status} evidence`, t => {
-    const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
-    const db = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const old = structuredClone(db.runs['run-test']); old.id = 'old-run';
-    old.operations = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [i, {
-      id: `old-${i}`, memberId: `old-member-${i}`, runId: old.id, state: 'accepted', position: 'head',
-    }]));
-    db.runs[old.id] = old;
-    fs.writeFileSync(file, JSON.stringify(db));
-    f.runtime.capacityEvidence = (id) => {
-      assert.equal(id, old.id);
-      if (status === 'unavailable') throw new Error('native unavailable');
-      return { ended: status === 'ended' };
-    };
-    if (status === 'ended') assert.equal(f.launch().confirmed, true);
-    else assert.throws(() => f.launch(), /派工資源已滿/);
-    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).runs[old.id], old);
-  });
-}
-
-test('current Run executor limit is unchanged even if native capacity evidence says ended', t => {
-  const f = fixture(t);
-  f.runtime.capacityEvidence = () => { throw new Error('current Run must not be queried'); };
-  for (const name of ['one', 'two', 'three']) f.launch('W-001', { reads: [`src/${name}`], writes: [`src/${name}`] });
-  assert.throws(() => f.launch('W-001', { reads: ['src/four'], writes: ['src/four'] }), /派工資源已滿/);
-});
-
 test('delegation names and status expose all subordinate assignments and cross-worktree locations', t => {
   const f = fixture(t);
   const first = f.launch('W-001', { title: '冰霜特效', reads: ['src/frost'], writes: ['src/frost'], worktree: `path:${f.project}` });

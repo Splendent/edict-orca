@@ -248,23 +248,8 @@ function resourceConflict(mine, theirs) {
   const shared = mine.filter(x => theirs.includes(x));
   return shared.length ? `共用工具資源 ${shared.join(', ')}` : null;
 }
-export function capacityOperations(db, currentRunId, runtime) {
-  const active = [], excluded = [];
-  for (const run of Object.values(db.runs)) {
-    for (const op of outstanding(run)) {
-      let evidence = { ended: false, reason: 'current-run' };
-      if (run.id !== currentRunId) {
-        try { evidence = runtime.capacityEvidence(run.id, op); }
-        catch { evidence = { ended: false, reason: 'query-unavailable' }; }
-      }
-      if (evidence?.ended === true) excluded.push({ runId: run.id, operationId: op.id, evidence });
-      else active.push(op);
-    }
-  }
-  return { active, excluded };
-}
-function claim(db, candidate, ignoreMember, runtime) {
-  const active = capacityOperations(db, candidate.runId, runtime).active.filter(x => x.memberId !== ignoreMember);
+function claim(db, candidate, ignoreMember) {
+  const active = Object.values(db.runs).flatMap(r => outstanding(r)).filter(x => x.memberId !== ignoreMember);
   const executors = new Set(active.filter(x => x.position === 'executor').map(x => x.memberId));
   if (candidate.position === 'executor' && executors.size >= 3 || new Set(active.map(x => x.memberId)).size >= 16) fail('目前派工資源已滿；沒有建立新代理');
   const conflicts = active.map(op => {
@@ -586,7 +571,7 @@ export class Workflow {
       if (!['current', 'new-child'].includes(worktree) && !worktree.startsWith('path:')) fail('工作樹必須為 current、new-child 或既有 path');
       const root = worktree === 'current' ? run.project : worktree.startsWith('path:') ? worktree.slice(5) : null;
       const shape = { physicalReads: mergeGeometry(geometry(root, reads), extraGeometry(extraReads)), physicalWrites: geometry(root, writes) };
-      claim(db, { runId, position, reads, extraReads, writes, resources, ...shape }, undefined, this.runtime);
+      claim(db, { runId, position, reads, extraReads, writes, resources, ...shape });
       const member = { id: randomUUID(), role, position, title: position === 'head' ? ROLES[role].head : ROLES[role].executor,
         supervisor: actor.id, scopes: role === 'zhongshu' && position === 'head' ? ['*'] : work ? [work] : [], dispatches: [], dispatchId: null, generation: 1 };
       const session = requireActive(this.session), settings = resolveSettings(session.config, role, position);
@@ -629,7 +614,7 @@ export class Workflow {
         if ((item.plan?.dependencies || []).some(id => !run.items[id].done)) fail('前置工作尚未結案；未送出原生派工');
       }
       const scope = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], worktree: 'current', root: run.project, physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
-      claim(db, { runId, position: target.position, reads: scope.reads, extraReads: scope.extraReads || [], writes: scope.writes, resources: scope.resources, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites }, target.id, this.runtime);
+      claim(db, { runId, position: target.position, reads: scope.reads, extraReads: scope.extraReads || [], writes: scope.writes, resources: scope.resources, physicalReads: scope.physicalReads, physicalWrites: scope.physicalWrites }, target.id);
       const session = requireActive(this.session), settings = resolveSettings(session.config, target.role, target.position);
       const member = { id: randomUUID(), role: target.role, position: target.position, title: target.title, supervisor: target.supervisor,
         scopes: [...target.scopes], dispatches: [], dispatchId: null, generation: 1, replaces: target.id };
@@ -783,7 +768,7 @@ export class Workflow {
       if (target.position === 'executor' && previous.state !== 'settled') fail('實作代理仍在執行；先處理其原生回報並 sync，再續辦有界修正');
       if (Object.values(run.operations).some(x => x.memberId === target.id && ['unknown', 'submitted'].includes(x.state))) fail('目標仍有未確認操作，不能再次傳送');
       const claims = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
-      claim(db, { ...claims, runId, position: target.position }, target.id, this.runtime);
+      claim(db, { ...claims, runId, position: target.position }, target.id);
       const record = { id: randomUUID(), requestId: randomUUID(), kind, from: source.id, to: targetId, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0, body: text(body, 'body'), forwardOf: forwardId || null, state: 'submitted', sequence: ++db.sequence };
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
