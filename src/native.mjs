@@ -1,9 +1,24 @@
-import { orcaCommand, runOrca } from './orca.mjs';
+import { orcaCommand, runOrca, preflightOrca } from './orca.mjs';
 import path from 'node:path';
 
 const validId = value => typeof value === 'string' && value.trim().length > 0;
 const hasHandle = (value, handle) => value && typeof value === 'object' &&
   (value.handle === handle || Object.values(value).some(child => hasHandle(child, handle)));
+
+export function sendArgs(runId, dispatchId, body, requestId) {
+  return ['orchestration', 'send', '--run', runId, '--to', `dispatch:${dispatchId}`, '--subject', 'Edict 工作交接', '--body', body, '--retry-request', requestId];
+}
+export function startArgs(runId, settings, options, requestId) {
+  const args = ['orchestration', 'worker-start', '--run', runId, '--spec-file', '-', '--worktree', options.worktree || 'current', '--agent', settings.agent, '--task-title', options.title, '--retry-request', requestId];
+  if (settings.model) args.push('--model', settings.model);
+  if (settings.effort) args.push('--effort', settings.effort);
+  if (options.parent) args.push('--parent', options.parent);
+  if (options.deps?.length) args.push('--deps', JSON.stringify(options.deps));
+  if (options.name) args.push('--name', options.name);
+  return args;
+}
+export const nativeArgs = args => [...args, ...(args[0] === 'orchestration' ? ['--json', '--full'] : ['--json'])];
+export const preflightNative = args => preflightOrca(orcaCommand(), nativeArgs(args));
 
 export class NativeRuntime {
   worktreeRoot(receipt) {
@@ -14,8 +29,7 @@ export class NativeRuntime {
     return data.worktree.path;
   }
   call(args, input) {
-    const flags = args[0] === 'orchestration' ? ['--json', '--full'] : ['--json'];
-    const result = runOrca(orcaCommand(), [...args, ...flags], input === undefined ? {} : { input });
+    const result = runOrca(orcaCommand(), nativeArgs(args), input === undefined ? {} : { input });
     let value;
     try { value = JSON.parse(result.stdout); }
     catch { throw new Error(`Orca 回應無法解析；結果未確認，不得重送：${result.stderr || result.stdout}`); }
@@ -116,12 +130,7 @@ export class NativeRuntime {
     return { ended: false, reason: 'execution-unconfirmed' };
   }
   start(runId, settings, spec, options, requestId) {
-    const args = ['orchestration', 'worker-start', '--run', runId, '--spec-file', '-', '--worktree', options.worktree || 'current', '--agent', settings.agent, '--task-title', options.title, '--retry-request', requestId];
-    if (settings.model) args.push('--model', settings.model);
-    if (settings.effort) args.push('--effort', settings.effort);
-    if (options.parent) args.push('--parent', options.parent);
-    if (options.deps?.length) args.push('--deps', JSON.stringify(options.deps));
-    if (options.name) args.push('--name', options.name);
+    const args = startArgs(runId, settings, options, requestId);
     try { return this.call(args, spec); }
     catch (error) {
       // Orca exits non-zero for an unverified start (input accepted, turn start unobserved) while still
@@ -169,7 +178,7 @@ export class NativeRuntime {
     return { state: 'applied', target: shared ? 'pane' : 'tab', ...renamed, reveal, restoreWarning };
   }
   send(runId, dispatchId, body, requestId) {
-    const data = this.call(['orchestration', 'send', '--run', runId, '--to', `dispatch:${dispatchId}`, '--subject', 'Edict 工作交接', '--body', body, '--retry-request', requestId]);
+    const data = this.call(sendArgs(runId, dispatchId, body, requestId));
     const normalized = { ...data };
     if (!Object.hasOwn(data, 'messageId') && data.message?.id) normalized.messageId = data.message.id;
     if (!Object.hasOwn(data, 'runId') && data.message?.run_id) normalized.runId = data.message.run_id;

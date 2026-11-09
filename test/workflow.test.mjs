@@ -8,6 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } from '../src/workflow.mjs';
 import { activate, deactivate } from '../src/session.mjs';
 import { defaults } from '../src/config.mjs';
+import { spawnFailure } from '../src/orca.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-workflow-'));
@@ -53,6 +54,103 @@ function fixture(t) {
   const launch = (work = 'W-001', data = {}) => w.launch('run-test', 'bingbu', 'executor', work, { spec: 'Write assigned file and submit evidence', generation: 1, ...data });
   as(bingbu);
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
+}
+
+test('long team send and forward fail before locking or writing any workflow state', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t); f.as(f.zhongshu);
+  const file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const db = JSON.parse(fs.readFileSync(file, 'utf8'));
+  db.runs['run-test'].messages.push({ id: 'forward-long', state: 'owner-required', to: f.menxia.id, from: f.zhongshu.id, work: 'W-001', generation: 1, body: 'x'.repeat(40000) });
+  fs.writeFileSync(file, JSON.stringify(db));
+  const before = fs.readFileSync(file, 'utf8');
+  // An unowned lock would fail after one second if admission reached transaction().
+  const lock = path.join(process.env.EDICT_HOME, 'workflow.lock'); fs.writeFileSync(lock, 'unverifiable');
+  t.after(() => fs.rmSync(lock, { force: true }));
+  assert.throws(() => f.w.message('run-test', f.menxia.id, 'W-001', 'x'.repeat(40000), undefined, 1), /EDICT|過長/);
+  f.root(); assert.throws(() => f.w.forward('run-test', 'forward-long'), /過長/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+});
+
+test('delegate preflights argv before persisting a member but keeps long stdin specs', { skip: process.platform !== 'win32' }, t => {
+  const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const session = fs.readdirSync(path.join(process.env.EDICT_HOME, 'sessions')).find(x => x.endsWith('.json'));
+  const sessionFile = path.join(process.env.EDICT_HOME, 'sessions', session), data = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+  data.config.roles.bingbu.model = 'x'.repeat(40000);
+  fs.writeFileSync(sessionFile, JSON.stringify(data));
+  const before = fs.readFileSync(file, 'utf8');
+  assert.throws(() => f.launch(), /過長/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  data.config.roles.bingbu.model = null; fs.writeFileSync(sessionFile, JSON.stringify(data));
+  assert.equal(f.launch('W-001', { spec: 'x'.repeat(40000) }).confirmed, true);
+});
+
+for (const started of [false, true]) {
+  test(`continuation spawn failure with processStarted=${started} has correct state`, t => {
+    const f = fixture(t); f.as(f.zhongshu);
+    f.runtime.send = () => { throw spawnFailure('orca', ['orchestration', 'send'], {
+      error: { code: 'ENAMETOOLONG', message: 'spawnSync orca ENAMETOOLONG' }, pid: started ? 42 : 0, status: null,
+    }); };
+    assert.throws(() => f.w.message('run-test', f.menxia.id, 'W-001', 'Review', undefined, 1), /ENAMETOOLONG/);
+    let run = f.w.run('run-test'); const op = Object.values(run.operations).at(-1);
+    assert.equal(op.state, started ? 'unknown' : 'refused');
+    assert.equal(run.messages.at(-1).state, op.state);
+    assert.equal(run.members[f.menxia.id].retired, undefined);
+    if (!started) {
+      const file = path.join(process.env.EDICT_HOME, 'workflow.json'), db = JSON.parse(fs.readFileSync(file, 'utf8'));
+      db.runs['run-test'].operations[op.id].state = 'unknown';
+      db.runs['run-test'].messages.at(-1).state = 'unknown';
+      fs.writeFileSync(file, JSON.stringify(db));
+    }
+    f.runtime.request = () => ({ state: 'absent' });
+    assert.equal(f.w.recover('run-test', op.id).state, op.state);
+    run = f.w.run('run-test');
+    assert.equal(run.members[f.menxia.id].retired, undefined);
+  });
+}
+
+for (const nativeState of ['absent', 'pending']) {
+  test(`legacy recovery keeps unknown with incomplete evidence or native ${nativeState}`, { skip: process.platform !== 'win32' }, t => {
+    const f = fixture(t); f.as(f.zhongshu);
+    f.runtime.send = () => { throw new Error('response lost'); };
+    assert.throws(() => f.w.message('run-test', f.menxia.id, 'W-001', 'Review', undefined, 1));
+    const file = path.join(process.env.EDICT_HOME, 'workflow.json'), db = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const run = db.runs['run-test'], op = Object.values(run.operations).at(-1);
+    op.spec = run.messages.at(-1).body = 'x'.repeat(40000);
+    if (nativeState === 'pending') op.error = 'orca orchestration send：spawnSync orca ENAMETOOLONG；沒有改用其他 Orca 入口，也沒有重試';
+    fs.writeFileSync(file, JSON.stringify(db));
+    f.runtime.request = () => ({ state: nativeState });
+    assert.equal(f.w.recover('run-test', op.id).state, 'unknown');
+  });
+}
+
+test('a refused continuation preserves executor contribution and allows a shorter follow-up', t => {
+  const f = fixture(t), started = f.launch();
+  const file = path.join(f.project, 'src/result.txt'); fs.writeFileSync(file, 'result');
+  f.as(started.member); const result = f.w.result('run-test', started.operation.id, { files: [file] }).result;
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.send = () => { throw spawnFailure('orca', ['orchestration', 'send'], { error: { code: 'E2BIG', message: 'E2BIG' }, pid: 0, status: null }); };
+  assert.throws(() => f.w.message('run-test', started.member.id, 'W-001', 'Repair', undefined, 1), /E2BIG/);
+  assert.deepEqual(f.w.run('run-test').items['W-001'].result, result);
+  f.runtime.send = () => ({ dispatchId: 'dispatch-short', taskId: 'task-short', runId: 'run-test' });
+  assert.equal(f.w.message('run-test', started.member.id, 'W-001', 'Read repair.txt', undefined, 1).state, 'delivered');
+});
+
+for (const bodySize of [100, 31000, 40000]) {
+  test(`legacy recover requires hard-limit proof for ${bodySize} characters`, { skip: process.platform !== 'win32' }, t => {
+    const f = fixture(t); f.as(f.zhongshu);
+    f.runtime.send = () => { throw new Error('orca orchestration send：spawnSync orca ENAMETOOLONG；沒有改用其他 Orca 入口，也沒有重試'); };
+    assert.throws(() => f.w.message('run-test', f.menxia.id, 'W-001', 'Review', undefined, 1));
+    const file = path.join(process.env.EDICT_HOME, 'workflow.json'), db = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const run = db.runs['run-test'], op = Object.values(run.operations).at(-1);
+    op.spec = run.messages.at(-1).body = 'x'.repeat(bodySize);
+    fs.writeFileSync(file, JSON.stringify(db));
+    f.runtime.request = () => ({ state: 'absent' });
+    const result = f.w.recover('run-test', op.id);
+    assert.equal(result.state, bodySize === 40000 ? 'refused' : 'unknown');
+    assert.equal(f.w.run('run-test').messages.at(-1).state, result.state);
+    assert.equal(f.w.run('run-test').members[f.menxia.id].retired, undefined);
+  });
 }
 
 for (const status of ['ended', 'running', 'unknown', 'unavailable']) {
