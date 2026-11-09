@@ -56,6 +56,26 @@ function fixture(t) {
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
 
+test('workflow retains the same lock while atomic rename retries', t => {
+  const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const lock = path.join(process.env.EDICT_HOME, 'workflow.lock'), rename = fs.renameSync;
+  let attempts = 0, held;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (to === file) {
+      const owner = fs.readFileSync(lock, 'utf8');
+      held ??= owner;
+      assert.equal(owner, held);
+      assert.equal(JSON.parse(owner).pid, process.pid);
+      if (++attempts === 1) throw Object.assign(new Error('temporary sharing violation'), { code: 'EPERM' });
+    }
+    return rename(from, to);
+  });
+  f.root(); f.add('W-RETRY');
+  assert.equal(attempts, 2);
+  assert.equal(fs.existsSync(lock), false);
+  assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).runs['run-test'].items['W-RETRY']);
+});
+
 test('long team send and forward fail before locking or writing any workflow state', { skip: process.platform !== 'win32' }, t => {
   const f = fixture(t); f.as(f.zhongshu);
   const file = path.join(process.env.EDICT_HOME, 'workflow.json');
