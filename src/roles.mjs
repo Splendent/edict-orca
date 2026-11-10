@@ -18,7 +18,7 @@ export const AGENTS = ['claude', 'codex', 'cursor'];
 // Root (taizi) duty card: printed by context and handoff so the coordinating conversation keeps its boundaries.
 export const TAIZI_DUTY = [
   '太子（原對話 root）職責：',
-  '- 要做：釐清使用者需求；run open、work add／amend；建立三省空頭領；依使用者明確指示執行 control；原樣 team forward owner-required 訊息；sync 與 work show 核對後向使用者回報。',
+  '- 要做：釐清使用者需求；run open、work add／amend；建立三省空頭領；依使用者明確指示執行 control；用 edict relay 自動原樣轉送 owner-required 訊息，或人工 team forward；sync 與 work show 核對後向使用者回報。',
   '- 不做：不自己調查或規劃（交中書）、不審查或批准（交門下）、不派六部或執行代理、不修改專案檔案、不代替任何角色記錄決策。',
   '- 收到下屬回報或喚醒：先 sync／work show 核對，只決定是否 forward、回報使用者或詢問使用者；不接手下屬的工作內容。',
   '- 上下文接近上限或需要換代理協調：用 edict handoff export 交棒給另一個對話，不重建 Run、不另開 root。',

@@ -62,6 +62,17 @@ edict team forward "$EDICT_MESSAGE_ID" --session "$EDICT_SESSION_ID" --run "$EDI
 
 forward 不帶任意 body，不讓 root 重做審查或擴大內容；保留原訊息 kind，不能把 handoff 換成 report 繞過控制。原訊息與代送操作的 ID、原發起者、目標、工作世代及結果保留。不要在 consumer_fenced 後直接改用裸原生 send，避免繞過業務與資源檢查。
 
+原對話 owner 可啟動自動轉送，非 owner 直接拒絕；必須明確指定 Run 與 session：
+
+```sh
+edict relay --run "$EDICT_RUN_ID" --session "$EDICT_SESSION_ID" --log /absolute/reports/relay.jsonl
+edict relay --run "$EDICT_RUN_ID" --session "$EDICT_SESSION_ID" --once --log /absolute/reports/relay.jsonl
+```
+
+預設每 30 秒讀取 pending.ownerRequired，`--interval <秒>` 可改輪詢間隔；`--once` 只跑一輪，適合定期檢查呼叫。Ctrl+C 結束輪詢並關閉紀錄檔；已開始的原生呼叫仍完成既有收據保存。relay 逐則沿用 team forward 的原始 body、kind、世代、路由、控制與資源檢查，所有原生呼叫都在 workflow 鎖外，沒有業務判斷。
+
+每則自動嘗試最多一次，嘗試紀錄與 forward 准入在同一交易保存，因此多個 relay 或程序重啟不重複送達。stdout 與可選的 JSONL 紀錄包含 messageId（原訊息）、forwardedMessageId（Edict 新訊息）、nativeMessageId（收據若有）、state、originalState、manualRequired 與錯誤。成功記錄「已由 relay 轉送 <新 id>」，不額外通知或喚醒寄件頭領。拒絕或結果未知時保留 forward 既有狀態與證據，不自動重試；manualRequired=true 交人工核對。明確拒絕後原訊息保留 owner-required；未知結果保留 forwarding 及未知操作，先由原發起身分 recover 核對，禁止直接重送。准入檢查失敗也保存一次嘗試，原訊息狀態不變。需要人工處理的單輪結束碼為 1，成功或沒有待轉訊息為 0。
+
 ## 狀態、結果未知與恢復
 
 ```sh
