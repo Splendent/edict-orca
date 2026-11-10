@@ -9,6 +9,7 @@ import { dispatchArgs, taskArgs, continueArgs, orcaCommand, runOrca, printResult
 import { ROOT, home, atomicJSON, activate, context, deactivate, readSession, requireActive, sessionId, writeSession, recordDispatch, recordTask, recordContinuation, taskBinding, saveDispatchReceipt } from './session.mjs';
 import { updateInstallation } from './update.mjs';
 import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } from './workflow.mjs';
+import { runRelay } from './relay.mjs';
 export { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand };
 const PACKAGE = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
@@ -43,6 +44,8 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
   edict review record --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team send <成員ID> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team forward <交接ID> --run <RunID> --session <ID>
+  edict relay --run <RunID> --session <ID> [--once] [--interval <秒，預設30>] [--log <JSONL檔>]
+    （僅原對話 owner；原樣轉送 owner-required，每則自動嘗試一次，失敗交人工處理；Ctrl+C 結束）
   edict team replace <成員ID> --run <RunID> --spec-file <JSON|-> --session <ID>
     （僅直接上級；原成員須已結束。新成員沿用原職務與範圍，使用目前角色設定，例如 config set 換代理後）
   edict control pause|resume|cancel|restart --run <RunID> [--work <W-ID>] --session <ID>
@@ -130,6 +133,7 @@ export async function main(argv) {
     'base-branch': { type: 'string' }, title: { type: 'string' },
     work: { type: 'string' }, operation: { type: 'string' }, position: { type: 'string' }, inherit: { type: 'boolean' }, objective: { type: 'string' },
     file: { type: 'string' }, note: { type: 'string' },
+    once: { type: 'boolean' }, interval: { type: 'string' }, log: { type: 'string' },
   } });
   const [command, sub, role] = positionals;
   if (options.version) {
@@ -156,6 +160,7 @@ export async function main(argv) {
     sync: ['session', 'run'],
     recover: ['session', 'run', 'operation'],
     handoff: ['session', 'run', 'file', 'note'],
+    relay: ['session', 'run', 'once', 'interval', 'log'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
@@ -236,6 +241,10 @@ export async function main(argv) {
     print(workflow.open(options.objective)); return 0;
   }
   if (!options.run) throw new Error('必須指定原生 --run；不猜選最近工作');
+  if (command === 'relay') {
+    if (!options.session) throw new Error('relay 必須明確指定 --session');
+    return runRelay(workflow, options.run, options);
+  }
   function input() {
     if (!options['spec-file']) throw new Error('須指定 --spec-file <JSON檔案|->');
     const raw = fs.readFileSync(options['spec-file'] === '-' ? 0 : options['spec-file'], 'utf8');

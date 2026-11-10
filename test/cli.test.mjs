@@ -8,6 +8,22 @@ import { ROOT, defaults, validateConfig, dispatchArgs, orcaCommand } from '../sr
 import { ROLES, workerSpec } from '../src/roles.mjs';
 
 const cli = path.join(ROOT, 'bin', 'edict.mjs');
+
+test('relay CLI exposes usage and rejects missing explicit run/session or extra arguments', () => {
+  const invoke = args => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+  const help = invoke(['help']);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /edict relay --run/);
+  for (const args of [
+    ['relay', '--session', 'codex:test', '--once'],
+    ['relay', '--run', 'run-test', '--once'],
+    ['relay', 'extra', '--run', 'run-test', '--session', 'codex:test'],
+  ]) {
+    const result = invoke(args);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--run|--session|多餘/);
+  }
+});
 const homes = new Map();
 function workspace(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-test-'));

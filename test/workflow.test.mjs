@@ -9,6 +9,7 @@ import { Workflow, assertWorkflowOwner, setWorkflowEnabled, workflowStatus } fro
 import { activate, deactivate } from '../src/session.mjs';
 import { defaults } from '../src/config.mjs';
 import { spawnFailure } from '../src/orca.mjs';
+import { runRelay } from '../src/relay.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-workflow-'));
@@ -55,6 +56,144 @@ function fixture(t) {
   as(bingbu);
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
+
+function relayFixture(t, { work = 'W-001', kind = 'handoff' } = {}) {
+  const f = fixture(t);
+  f.as(f.zhongshu);
+  f.runtime.send = () => { throw Object.assign(new Error('owner required'), { code: 'consumer_fenced' }); };
+  const first = f.w.message('run-test', f.menxia.id, work, 'Literal body\n中文 $() `text`', undefined, 1, kind);
+  f.root();
+  return { ...f, first };
+}
+
+test('relay forwards owner-required verbatim once and converges existing operation states outside the lock', t => {
+  const f = relayFixture(t);
+  let sends = 0;
+  f.runtime.send = (runId, dispatchId, body) => {
+    assert.equal(fs.existsSync(path.join(process.env.EDICT_HOME, 'workflow.lock')), false);
+    assert.equal(body, 'Literal body\n中文 $() `text`');
+    // Another relay process observing the durable admission must not send again.
+    const [inFlight] = new Workflow('codex:workflow', f.runtime).relay('run-test');
+    assert.equal(inFlight.state, 'unknown');
+    assert.equal(inFlight.skipped, true);
+    sends++;
+    return { dispatchId: 'relay-follow', taskId: 'relay-task', runId, messageId: 'native-relay' };
+  };
+  const [row] = f.w.relay('run-test');
+  assert.equal(row.state, 'delivered');
+  assert.equal(row.nativeMessageId, 'native-relay');
+  assert.equal(row.manualRequired, false);
+  const saved = f.w.run('run-test');
+  assert.equal(saved.messages.find(x => x.id === f.first.messageId).forwardedBy, row.forwardedMessageId);
+  assert.equal(saved.operations[f.first.messageId].state, 'forwarded');
+  assert.equal(saved.members[f.menxia.id].dispatchId, 'relay-follow');
+  assert.deepEqual(new Workflow('codex:workflow', f.runtime).relay('run-test'), []);
+  assert.equal(sends, 1);
+});
+
+test('relay refuses a non-owner without writing workflow or log', async t => {
+  const f = relayFixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const before = fs.readFileSync(file, 'utf8'), log = path.join(f.dir, 'refused.jsonl');
+  f.as(f.zhongshu);
+  assert.throws(() => f.w.relay('run-test'), /owner/);
+  await assert.rejects(runRelay(f.w, 'run-test', { once: true, log }), /owner/);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
+  assert.equal(fs.existsSync(log), false);
+});
+
+for (const state of ['refused', 'unknown']) test(`relay records ${state} and never resends across rounds or restart`, t => {
+  const f = relayFixture(t);
+  let sends = 0;
+  f.runtime.send = () => {
+    sends++;
+    const receipt = state === 'refused' ? { ok: false, error: { data: { effectsApplied: false, spawn: { processStarted: false } } } } : undefined;
+    throw Object.assign(new Error('relay delivery failure'), { receipt });
+  };
+  const [row] = f.w.relay('run-test');
+  assert.equal(row.state, state);
+  assert.equal(row.manualRequired, true);
+  assert.equal(row.error, 'relay delivery failure');
+  const saved = f.w.run('run-test').messages.find(x => x.id === f.first.messageId);
+  assert.equal(saved.state, state === 'refused' ? 'owner-required' : 'forwarding');
+  assert.ok(saved.relayAttempt.forwardedMessageId);
+  assert.equal(f.w.relay('run-test')[0].manualRequired, true);
+  assert.equal(new Workflow('codex:workflow', f.runtime).relay('run-test')[0].skipped, true);
+  assert.equal(sends, 1);
+});
+
+test('relay records admission refusal without changing original state and does not retry', t => {
+  const f = relayFixture(t);
+  f.w.control('run-test', 'pause');
+  const [row] = f.w.relay('run-test');
+  assert.equal(row.state, 'refused');
+  assert.equal(row.forwardedMessageId, null);
+  assert.equal(row.originalState, 'owner-required');
+  assert.match(row.error, /暫停/);
+  f.w.control('run-test', 'resume');
+  f.runtime.send = () => assert.fail('must not retry admission failure');
+  assert.equal(f.w.relay('run-test')[0].skipped, true);
+});
+
+test('relay preserves report kind after off and accepts messages without a work scope', t => {
+  const f = relayFixture(t, { work: undefined, kind: 'report' });
+  // Exercise a truly unscoped message, separate from the fixture default.
+  f.as(f.zhongshu);
+  const first = f.w.message('run-test', f.menxia.id, undefined, 'Unscoped report', undefined, undefined, 'report');
+  f.root(); deactivate('codex:workflow');
+  f.runtime.send = () => ({ messageId: 'report-native' });
+  const rows = f.w.relay('run-test');
+  assert.ok(rows.every(x => x.state === 'delivered'));
+  const forwarded = f.w.run('run-test').messages.find(x => x.forwardOf === first.messageId);
+  assert.equal(forwarded.kind, 'report');
+  assert.equal(forwarded.body, 'Unscoped report');
+});
+
+test('relay --once exits after one round and appends parseable results to its log', async t => {
+  const f = relayFixture(t), log = path.join(f.dir, 'relay.jsonl'), output = [];
+  f.runtime.send = () => ({ messageId: 'logged-native' });
+  assert.equal(await runRelay(f.w, 'run-test', { once: true, log, output: row => output.push(row) }), 0);
+  assert.equal(output.length, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(log, 'utf8')), output[0]);
+  assert.match(output[0].note, /已由 relay 轉送/);
+  assert.equal(await runRelay(f.w, 'run-test', { once: true, log }), 0);
+  assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1);
+});
+
+test('relay --once returns failure status for manual-required results', async t => {
+  const f = relayFixture(t), output = [];
+  f.runtime.send = () => { throw new Error('unconfirmed native call'); };
+  assert.equal(await runRelay(f.w, 'run-test', { once: true, output: row => output.push(row) }), 1);
+  assert.equal(output[0].state, 'unknown');
+});
+
+test('relay polling stops on SIGINT and removes signal listeners', async t => {
+  const f = relayFixture(t), count = process.listenerCount('SIGINT');
+  f.runtime.send = () => ({ messageId: 'stop-native' });
+  const timer = setTimeout(() => process.emit('SIGINT'), 20);
+  t.after(() => clearTimeout(timer));
+  assert.equal(await runRelay(f.w, 'run-test', { interval: 30, output: () => {} }), 0);
+  assert.equal(process.listenerCount('SIGINT'), count);
+});
+
+test('relay validates poll intervals before touching workflow state', async () => {
+  for (const interval of [0, -1, 'NaN', 'Infinity', 2147484]) {
+    await assert.rejects(runRelay({}, 'run-test', { once: true, interval }), /interval/);
+  }
+});
+
+test('relay polling logs failed attempts on subsequent rounds without another native send', async t => {
+  const f = relayFixture(t), signal = new AbortController(), output = [];
+  let sends = 0;
+  f.runtime.send = () => { sends++; throw new Error('unknown delivery'); };
+  const result = await runRelay(f.w, 'run-test', { interval: 0.001, signal: signal.signal, output: row => {
+    output.push(row);
+    if (output.length === 2) signal.abort();
+  } });
+  assert.equal(result, 1);
+  assert.equal(sends, 1);
+  assert.equal(output[1].skipped, true);
+  assert.equal(output[1].state, 'unknown');
+});
 
 test('workflow reports recoverable corrupt main without changing either file', t => {
   const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');

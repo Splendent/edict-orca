@@ -839,7 +839,7 @@ export class Workflow {
     if (action === 'cancel') result.stops = this.drainStops(runId);
     return result;
   }
-  message(runId, targetId, work, body, forwardId, expectedGeneration, kind = 'handoff') {
+  message(runId, targetId, work, body, forwardId, expectedGeneration, kind = 'handoff', relay = false) {
     if (!['handoff', 'report'].includes(kind)) fail('訊息種類必須為 handoff 或 report');
     const prepared = this.mutate(runId, (run, actor, db, evidence) => {
       isHead(actor); const target = run.members[targetId];
@@ -853,7 +853,8 @@ export class Workflow {
       if (forwardId) {
         roleIs(actor, 'taizi');
         const original = run.messages.find(x => x.id === forwardId && x.state === 'owner-required');
-        if (!original || original.to !== targetId || original.work !== work || original.body !== body || original.generation !== item?.generation) fail('沒有可由 owner 原樣轉交的有效世代交接');
+        if (!original || original.to !== targetId || original.work !== work || original.body !== body || original.generation !== (item?.generation || 0)) fail('沒有可由 owner 原樣轉交的有效世代交接');
+        if (relay && original.relayAttempt) fail('relay 已嘗試此訊息；交由人工處理，不重送');
         source = run.members[original.from];
         if (!source || source.retired) fail('交接來源已失效');
         original.state = 'forwarding';
@@ -871,6 +872,8 @@ export class Workflow {
       const claims = target.position === 'executor' ? previous : { reads: [], extraReads: [], writes: [], resources: [], physicalReads: geometry(run.project, []), physicalWrites: geometry(run.project, []) };
       claim(db, { ...claims, runId, position: target.position }, target.id, evidence);
       const record = { id: randomUUID(), requestId: randomUUID(), kind, from: source.id, to: targetId, work: work || null, generation: item?.generation || 0, revision: item?.revision || 0, body: text(body, 'body'), forwardOf: forwardId || null, state: 'submitted', sequence: ++db.sequence };
+      // Commit the attempt with the existing forward admission, before native I/O.
+      if (relay) run.messages.find(x => x.id === forwardId).relayAttempt = { forwardedMessageId: record.id, at: new Date().toISOString() };
       run.messages.push(record);
       run.operations[record.id] = { id: record.id, operationKind: 'continuation', supersedes: previous.id, memberId: target.id,
         role: target.role, position: target.position, actorId: actor.id, runId, requestId: record.requestId,
@@ -904,10 +907,48 @@ export class Workflow {
     const finalized = this.recordReceipt(runId, prepared.record.id, receipt);
     return { ...finalized.message, confirmed: finalized.confirmed, state: finalized.confirmed ? 'delivered' : 'unknown' };
   }
-  forward(runId, messageId) {
+  forward(runId, messageId, relay = false) {
     const original = this.run(runId).messages.find(x => x.id === messageId);
     if (!original) fail('找不到交接');
-    return this.message(runId, original.to, original.work, original.body, messageId, original.generation, original.kind || 'handoff');
+    return this.message(runId, original.to, original.work, original.body, messageId, original.generation, original.kind || 'handoff', relay);
+  }
+  relay(runId, { stopped = () => false, onResult = () => {} } = {}) {
+    const snapshot = this.run(runId);
+    if (!this.runtime.identity(runId).owner) fail('只有原對話 owner 可以執行 relay');
+    if (snapshot.archived) fail('此 Run 已封存，不能執行 relay');
+    const results = [];
+    const pending = handoffPending(snapshot).ownerRequired;
+    // An interrupted/unknown forward is no longer owner-required. Surface its
+    // durable attempt for human recovery as well, without making another call.
+    pending.push(...snapshot.messages.filter(x => x.relayAttempt && x.state === 'forwarding').map(x => ({ messageId: x.id })));
+    for (const { messageId } of pending) {
+      if (stopped()) break;
+      const original = this.run(runId).messages.find(x => x.id === messageId);
+      if (original.state !== 'owner-required' && !(original.relayAttempt && original.state === 'forwarding')) continue;
+      let error;
+      if (!original.relayAttempt && original.state === 'owner-required') {
+        try { this.forward(runId, messageId, true); }
+        catch (failure) {
+          error = failure.message;
+          // Preflight/admission failures have no forward record. Persist a marker
+          // only for that case so later rounds and processes never retry them.
+          if (!this.run(runId).messages.find(x => x.id === messageId).relayAttempt) this.mutate(runId, run => {
+            const saved = run.messages.find(x => x.id === messageId);
+            if (!saved.relayAttempt && saved.state === 'owner-required') saved.relayAttempt = { forwardedMessageId: null, error, at: new Date().toISOString() };
+          }, { active: false });
+        }
+      }
+      const run = this.run(runId), saved = run.messages.find(x => x.id === messageId);
+      const forwarded = run.messages.find(x => x.id === saved.relayAttempt?.forwardedMessageId);
+      const state = forwarded?.state === 'submitted' ? 'unknown' : forwarded?.state || 'refused';
+      const row = { messageId, forwardedMessageId: forwarded?.id || null,
+        nativeMessageId: forwarded?.receipt?.messageId || forwarded?.receipt?.message?.id || null,
+        state, originalState: saved.state, manualRequired: state !== 'delivered',
+        skipped: !!original.relayAttempt, error: forwarded?.error || saved.relayAttempt?.error || error || null,
+        note: state === 'delivered' ? `已由 relay 轉送 ${forwarded.id}` : 'relay 不重送；交由人工核對或 recover' };
+      results.push(row); onResult(row);
+    }
+    return results;
   }
   recover(runId, operationId) {
     const run = this.run(runId), actor = memberFor(run, this.runtime.identity(runId)), op = run.operations[operationId];

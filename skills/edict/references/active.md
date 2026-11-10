@@ -24,7 +24,7 @@ root 建立三省是控制啟動，不代替送審或核可。三省的原生 cr
 
 同一工作項目的每份 plan、review、帶 work 的 ensure／delegate／team send 都明確帶目前 `generation`。新增項目從 1 開始；取消後明確重做才產生新代，不把 revision 當 generation。`work result` 以原 operation ID 綁定其世代，JSON 可附 generation 供交付說明，但不能用它改變原委派。
 
-六部跨部門問題交尚書轉送，不能直接命令其他部門。執行代理只向自己的頭領回報／提問，不再開下層。正式訊息用 `team send <目標memberId>`；目標原生身分已 settled 且回應 owner-required 時，原對話用 `team forward <messageId>` 原樣代送，不重寫決策。完整規則見 [執行與恢復](scheduling.md)。
+六部跨部門問題交尚書轉送，不能直接命令其他部門。執行代理只向自己的頭領回報／提問，不再開下層。正式訊息用 `team send <目標memberId>`；目標原生身分已 settled 且回應 owner-required 時，原對話可用 `edict relay --run <RunID> --session <ID>` 自動原樣代送，或人工 `team forward <messageId>`，不重寫決策。完整規則見 [執行與恢復](scheduling.md)。
 
 team send 的 JSON 預設 kind=handoff，代表受控制及授權限制的業務交接。完成或停止結果用 `{"generation":1,"kind":"report","body":"W-001 已完成門下結案，成果與驗收摘要見目前 work show。"}`。report 只許頭領間沿既有合法路由及共同 scope 回報，仍核對身分與世代；可在 Done、pause、cancel 或 off 後保存及轉達唯讀結果，但不授權實作、不改核可、不送 executor，也不藉通知要求對方恢復派工。
 
@@ -46,7 +46,7 @@ team send 的 JSON 預設 kind=handoff，代表受控制及授權限制的業務
 
 ## 太子職責與交棒
 
-原對話是太子（root）。要做：釐清使用者需求、`run open`、`work add`／`amend`、建立三省空頭領、依使用者明確指示 `control`、原樣 `team forward`，以及 `sync`／`work show` 核對後回報使用者。不做：調查或規劃（中書）、審查或批准（門下）、派六部或執行代理、修改專案檔案、代替任何角色記錄決策。收到下屬回報或喚醒時，先核對狀態，只決定是否轉交、回報或詢問使用者，不接手下屬的工作內容。
+原對話是太子（root）。要做：釐清使用者需求、`run open`、`work add`／`amend`、建立三省空頭領、依使用者明確指示 `control`、以 `edict relay` 自動原樣轉送 owner-required 訊息或人工 `team forward`，以及 `sync`／`work show` 核對後回報使用者。不做：調查或規劃（中書）、審查或批准（門下）、派六部或執行代理、修改專案檔案、代替任何角色記錄決策。收到下屬回報或喚醒時，先核對狀態，只決定是否轉交、回報或詢問使用者，不接手下屬的工作內容。
 
 上下文接近上限或需要改用其他代理協調時，經使用者同意以 `handoff export` 交棒，流程見 SKILL.md 的交棒段落。交棒不重建 Run、不重派工作；在途 worker 沿用原 session 與 EDICT_HOME，回報改送接手對話。
 

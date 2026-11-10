@@ -313,4 +313,4 @@ edict team send "$EDICT_SHANGSHU_MEMBER_ID" --session "$EDICT_SESSION_ID" --run 
 edict team send "$EDICT_ZHONGSHU_MEMBER_ID" --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work W-001 --spec-file /tmp/edict-completion-report.json
 ```
 
-report 只允許頭領送既有頭領，仍檢查路由、共同工作 scope、generation 與真實身分。不能送 executor、擴大授權、改驗收或觸發後續業務。Done、pause、cancel、off 後仍可保存及轉達唯讀結果；業務命令繼續受原控制限制。目標需要 owner 代喚醒時，root 依 scheduling.md 原樣 forward，保留 report 種類。root 依原生完成通知及工作視圖向使用者回報，不另建一位 root 頭領接收訊息。
+report 只允許頭領送既有頭領，仍檢查路由、共同工作 scope、generation 與真實身分。不能送 executor、擴大授權、改驗收或觸發後續業務。Done、pause、cancel、off 後仍可保存及轉達唯讀結果；業務命令繼續受原控制限制。目標需要 owner 代喚醒時，root 依 scheduling.md 用 edict relay 自動原樣轉送或人工 forward，保留 report 種類。root 依原生完成通知及工作視圖向使用者回報，不另建一位 root 頭領接收訊息。
