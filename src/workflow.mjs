@@ -64,18 +64,32 @@ function followUpSettlements(rows, runtime, runId) {
   const released = row => row.terminalState === 'released' || row.resource?.releaseState === 'released' ||
     row.resource?.ownershipState === 'released' || row.projection?.liveness?.verdict === 'exited';
   const failed = rows.filter(row => ['failed', 'abandoned'].includes(state(row)) && !executionSettled(row));
-  const terminals = new Set(failed.map(row => row.agentTerminalHandle).filter(validId));
   const children = new Map(), byId = new Map(rows.map(row => [id(row), row]));
-  // Native reads must finish before the workflow transaction. A terminal match only selects
-  // candidates; followUpOf proves that they continue this member rather than reuse its terminal.
+  if (!failed.length) return new Map();
+  const dispatches = new Map();
+  // Native reads must finish before the workflow transaction. followUpOf selects the
+  // parent; terminal handles only corroborate that relationship when available.
+  const lookup = row => {
+    if (!dispatches.has(id(row))) {
+      let dispatch;
+      try { dispatch = runtime.dispatch(id(row)); } catch { /* Keep unconfirmed claims. */ }
+      dispatches.set(id(row), dispatch?.id === id(row) && dispatch.runId === runId &&
+        dispatch.taskId === row.taskId ? dispatch : null);
+    }
+    return dispatches.get(id(row));
+  };
   for (const row of rows) {
-    if (!terminals.has(row.agentTerminalHandle)) continue;
-    let dispatch;
-    try { dispatch = runtime.dispatch(id(row)); } catch { continue; }
-    if (dispatch.id !== id(row) || dispatch.runId !== runId || dispatch.taskId !== row.taskId ||
-        dispatch.assigneeHandle !== row.agentTerminalHandle || !validId(dispatch.followUpOf)) continue;
+    const dispatch = lookup(row);
+    if (!dispatch || !validId(dispatch.followUpOf)) continue;
+    if (validId(row.agentTerminalHandle) && validId(dispatch.assigneeHandle) &&
+        dispatch.assigneeHandle !== row.agentTerminalHandle) continue;
     const parent = byId.get(dispatch.followUpOf);
-    if (!parent || parent.agentTerminalHandle !== row.agentTerminalHandle) continue;
+    if (!parent) continue;
+    const parentDispatch = validId(parent.agentTerminalHandle) ? null : lookup(parent);
+    if (!validId(parent.agentTerminalHandle) && !parentDispatch) continue;
+    const parentTerminal = validId(parent.agentTerminalHandle) ? parent.agentTerminalHandle : parentDispatch.assigneeHandle;
+    const childTerminal = validId(row.agentTerminalHandle) ? row.agentTerminalHandle : dispatch.assigneeHandle;
+    if (validId(parentTerminal) && validId(childTerminal) && parentTerminal !== childTerminal) continue;
     const siblings = children.get(dispatch.followUpOf) || [];
     siblings.push(row); children.set(dispatch.followUpOf, siblings);
   }
