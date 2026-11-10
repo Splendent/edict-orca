@@ -769,6 +769,37 @@ function failedFollowUpFixture(t, state = 'failed') {
 }
 
 for (const state of ['failed', 'abandoned']) {
+  for (const terminal of ['dispatch', 'missing', 'conflict', 'wrong-run', 'wrong-task', 'running', 'no-link']) {
+    test(`${state} null-terminal native row uses follow-up evidence with ${terminal} parent evidence`, t => {
+      const f = failedFollowUpFixture(t, state);
+      Object.assign(f.original, { workerState: state, agentTerminalHandle: null, terminalState: null, resource: null });
+      f.dispatches.set(f.original.dispatchId, { id: f.original.dispatchId, runId: 'run-test',
+        taskId: f.original.taskId, assigneeHandle: terminal === 'missing' ? null : terminal === 'conflict' ? 'other-terminal' : 'term-member' });
+      if (terminal === 'wrong-run') f.dispatches.get(f.original.dispatchId).runId = 'other-run';
+      if (terminal === 'wrong-task') f.dispatches.get(f.original.dispatchId).taskId = 'other-task';
+      if (terminal === 'running') f.followUp.state = 'ready';
+      if (terminal === 'no-link') delete f.dispatches.get(f.followUp.dispatchId).followUpOf;
+      Object.assign(f.followUp, { workerState: f.followUp.state, stage: 'settled', terminalState: 'released',
+        projection: { liveness: { verdict: 'exited' } } });
+      if (terminal === 'running') Object.assign(f.followUp, { terminalState: null, projection: null });
+      f.root(); f.w.sync('run-test');
+      assert.equal(f.w.run('run-test').operations[f.started.operation.id].state,
+        ['dispatch', 'missing'].includes(terminal) ? 'settled' : 'accepted');
+    });
+  }
+}
+
+test('native follow-up settles when both rows and dispatches lack terminal handles', t => {
+  const f = failedFollowUpFixture(t);
+  f.original.agentTerminalHandle = f.followUp.agentTerminalHandle = null;
+  f.dispatches.get(f.followUp.dispatchId).assigneeHandle = null;
+  f.dispatches.set(f.original.dispatchId, { id: f.original.dispatchId, runId: 'run-test',
+    taskId: f.original.taskId, assigneeHandle: null });
+  f.root(); f.w.sync('run-test');
+  assert.equal(f.w.run('run-test').operations[f.started.operation.id].state, 'settled');
+});
+
+for (const state of ['failed', 'abandoned']) {
   for (const ending of ['succeeded', 'exited', 'released']) {
     test(`${state} settles with native same-terminal follow-up ${ending} evidence`, t => {
       const f = failedFollowUpFixture(t, state);

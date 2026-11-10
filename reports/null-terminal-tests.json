@@ -1,0 +1,33 @@
+{
+  "baseline": {
+    "tests": 279,
+    "pass": 262,
+    "fail": 17
+  },
+  "fixed": {
+    "tests": 294,
+    "pass": 277,
+    "fail": 17
+  },
+  "added": [],
+  "removed": [],
+  "failures": [
+    "POSIX hook paths use shell quoting rather than JSON quoting",
+    "an unverified start that still returns the Task/Dispatch pair is kept as a receipt",
+    "authorized team creation delivers literal stdin, argv, identity and cwd",
+    "cli: export writes a private packet without printing the token; accept in another conversation takes over",
+    "directory scopes include linked descendants and hard-linked files",
+    "doctor checks interface and runtime without dispatch or consuming inbox",
+    "doctor preserves unsupported-command failure and does not claim success",
+    "doctor rejects missing dependency and continuation capabilities before runtime access",
+    "failed authorized start preserves the native receipt and is not retried",
+    "incomplete and wrong-Run receipts remain durable unknown operations without retries",
+    "install never modifies agent settings or hooks and enables no sessions",
+    "native adapter forwards structured deps, parent and literal task text without shell interpretation",
+    "native adapter preserves child-worktree selectors and names as literal argv",
+    "native calls request full records only for orchestration commands",
+    "native message adapter keeps target, Run and literal body without replacement model arguments",
+    "symbolic links to existing and future files cannot bypass conflicts",
+    "workflow receipt saving is independent from a contended session index"
+  ]
+}
