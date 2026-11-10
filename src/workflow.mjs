@@ -58,6 +58,37 @@ function executionSettled(row) {
   if (['completed', 'succeeded', 'stopped'].includes(state)) return true;
   return ['failed', 'abandoned'].includes(state) && (row.terminalState === 'released' || row.resource?.releaseState === 'released' || row.resource?.ownershipState === 'released' || row.projection?.liveness?.verdict === 'exited');
 }
+function followUpSettlements(rows, runtime, runId) {
+  const id = row => row.dispatchId || row.id;
+  const state = row => row.workerState || row.state || row.status;
+  const released = row => row.terminalState === 'released' || row.resource?.releaseState === 'released' ||
+    row.resource?.ownershipState === 'released' || row.projection?.liveness?.verdict === 'exited';
+  const failed = rows.filter(row => ['failed', 'abandoned'].includes(state(row)) && !executionSettled(row));
+  const terminals = new Set(failed.map(row => row.agentTerminalHandle).filter(validId));
+  const children = new Map(), byId = new Map(rows.map(row => [id(row), row]));
+  // Native reads must finish before the workflow transaction. A terminal match only selects
+  // candidates; followUpOf proves that they continue this member rather than reuse its terminal.
+  for (const row of rows) {
+    if (!terminals.has(row.agentTerminalHandle)) continue;
+    let dispatch;
+    try { dispatch = runtime.dispatch(id(row)); } catch { continue; }
+    if (dispatch.id !== id(row) || dispatch.runId !== runId || dispatch.taskId !== row.taskId ||
+        dispatch.assigneeHandle !== row.agentTerminalHandle || !validId(dispatch.followUpOf)) continue;
+    const parent = byId.get(dispatch.followUpOf);
+    if (!parent || parent.agentTerminalHandle !== row.agentTerminalHandle) continue;
+    const siblings = children.get(dispatch.followUpOf) || [];
+    siblings.push(row); children.set(dispatch.followUpOf, siblings);
+  }
+  const settled = (row, seen) => {
+    if (seen.has(id(row))) return false;
+    const next = new Set([...seen, id(row)]), followUps = children.get(id(row)) || [];
+    if (followUps.length && !followUps.every(child => settled(child, next))) return false;
+    return executionSettled(row) || released(row) ||
+      ['failed', 'abandoned'].includes(state(row)) && followUps.length > 0;
+  };
+  return new Map(failed.filter(row => (children.get(id(row)) || []).length && settled(row, new Set()))
+    .map(row => [id(row), { reason: 'native-follow-up-settled', followUpDispatchIds: children.get(id(row)).map(id) }]));
+}
 const safeRanges = (values, label) => list(values, label).map(value => {
   const normalized = path.posix.normalize(value.replaceAll('\\', '/'));
   if (value === '*') return value;
@@ -911,13 +942,17 @@ export class Workflow {
   }
   sync(runId) {
     const rows = this.runtime.workers(runId);
+    const followUps = followUpSettlements(rows, this.runtime, runId);
     this.mutate(runId, run => {
       for (const row of rows) {
         const id = row.dispatchId || row.id;
         for (const op of Object.values(run.operations).filter(x => x.dispatchId === id)) {
           op.native = row;
           op.observedAt = new Date().toISOString();
-          if (executionSettled(row)) { op.state = 'settled'; op.stopRequested = false; }
+          if (executionSettled(row) || followUps.has(id)) {
+            op.state = 'settled'; op.stopRequested = false;
+            if (followUps.has(id)) op.settlementEvidence = followUps.get(id);
+          }
         }
       }
     }, { active: false });
