@@ -750,6 +750,86 @@ test('failed with live or unverifiable resources retains claims and cancellation
   assert.throws(() => f.w.control('run-test', 'restart', 'W-001'), /在途/);
 });
 
+function failedFollowUpFixture(t, state = 'failed') {
+  const f = fixture(t), started = f.launch();
+  const original = f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId);
+  Object.assign(original, { runId: 'run-test', taskId: started.operation.taskId, state,
+    agentTerminalHandle: 'term-member', projection: { liveness: { verdict: 'unverifiable' } } });
+  const followUp = { dispatchId: 'native-follow-up', taskId: 'follow-task', runId: 'run-test',
+    state: 'succeeded', agentTerminalHandle: original.agentTerminalHandle };
+  f.runtime.rows.push(followUp);
+  const dispatches = new Map([[followUp.dispatchId, { id: followUp.dispatchId, taskId: followUp.taskId,
+    runId: 'run-test', assigneeHandle: original.agentTerminalHandle, followUpOf: original.dispatchId }]]);
+  f.runtime.dispatch = id => {
+    assert.equal(fs.existsSync(path.join(process.env.EDICT_HOME, 'workflow.lock')), false);
+    if (!dispatches.has(id)) throw new Error('dispatch unavailable');
+    return dispatches.get(id);
+  };
+  return { ...f, started, original, followUp, dispatches };
+}
+
+for (const state of ['failed', 'abandoned']) {
+  for (const ending of ['succeeded', 'exited', 'released']) {
+    test(`${state} settles with native same-terminal follow-up ${ending} evidence`, t => {
+      const f = failedFollowUpFixture(t, state);
+      if (ending !== 'succeeded') f.followUp.state = 'failed';
+      if (ending === 'exited') f.followUp.projection = { liveness: { verdict: 'exited' } };
+      if (ending === 'released') f.followUp.terminalState = 'released';
+      f.root(); f.w.sync('run-test');
+      const op = f.w.run('run-test').operations[f.started.operation.id];
+      assert.equal(op.state, 'settled');
+      assert.equal(op.native.state, state);
+      assert.deepEqual(op.settlementEvidence.followUpDispatchIds, [f.followUp.dispatchId]);
+    });
+  }
+}
+
+for (const missing of ['running', 'no-follow-up', 'unrelated', 'wrong-run', 'wrong-task', 'wrong-terminal', 'missing-terminal', 'query-failed']) {
+  test(`failed dispatch retains claims when follow-up evidence is ${missing}`, t => {
+    const f = failedFollowUpFixture(t), dispatch = f.dispatches.get(f.followUp.dispatchId);
+    if (missing === 'running') f.followUp.state = 'ready';
+    if (missing === 'no-follow-up') f.runtime.rows.pop();
+    if (missing === 'unrelated') dispatch.followUpOf = 'unrelated-dispatch';
+    if (missing === 'wrong-run') dispatch.runId = 'other-run';
+    if (missing === 'wrong-task') dispatch.taskId = 'other-task';
+    if (missing === 'wrong-terminal') dispatch.assigneeHandle = 'other-terminal';
+    if (missing === 'missing-terminal') delete f.original.agentTerminalHandle;
+    if (missing === 'query-failed') f.dispatches.clear();
+    f.root(); f.w.sync('run-test');
+    assert.equal(f.w.run('run-test').operations[f.started.operation.id].state, 'accepted');
+    f.as(f.bingbu);
+    assert.throws(() => f.w.message('run-test', f.started.member.id, 'W-001', 'Repair', undefined, 1), /仍在執行/);
+  });
+}
+
+test('native follow-up settlement permits a continuation from the original supervisor', t => {
+  const f = failedFollowUpFixture(t);
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.send = (runId, dispatchId, body) => {
+    assert.equal(dispatchId, f.original.dispatchId);
+    assert.equal(body, 'Repair within approved scope');
+    return { dispatchId: 'next-follow-up', taskId: 'next-task', runId };
+  };
+  const sent = f.w.message('run-test', f.started.member.id, 'W-001', 'Repair within approved scope', undefined, 1);
+  assert.equal(sent.state, 'delivered');
+  const run = f.w.run('run-test');
+  assert.equal(run.operations[f.started.operation.id].supersededBy, sent.id);
+  assert.equal(run.members[f.started.member.id].dispatchId, 'next-follow-up');
+  assert.equal(run.operations[sent.id].state, 'accepted');
+});
+
+for (const ending of ['ready', 'succeeded']) {
+  test(`a later chained follow-up ${ending} controls settlement independently of row order`, t => {
+    const f = failedFollowUpFixture(t);
+    const child = { ...f.followUp, dispatchId: 'last-follow-up', taskId: 'last-task', state: ending };
+    f.runtime.rows.unshift(child);
+    f.dispatches.set(child.dispatchId, { id: child.dispatchId, taskId: child.taskId, runId: 'run-test',
+      assigneeHandle: child.agentTerminalHandle, followUpOf: f.followUp.dispatchId });
+    f.root(); f.w.sync('run-test');
+    assert.equal(f.w.run('run-test').operations[f.started.operation.id].state, ending === 'ready' ? 'accepted' : 'settled');
+  });
+}
+
 test('recovering a lost continuation applies replacement and message finalization exactly once', t => {
   const f = fixture(t), started = f.launch('W-001', { writes: ['src/a.txt'], reads: [] });
   const file = path.join(f.project, 'src/a.txt'); fs.writeFileSync(file, 'v1');
