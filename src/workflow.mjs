@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { home, readSession, requireActive, atomicJSON, writeSession } from './session.mjs';
+import { home, readSession, requireActive, atomicJSON, writeSession, readJSON } from './session.mjs';
 import { ROLES, workerSpec } from './roles.mjs';
 import { resolveSettings } from './config.mjs';
 import { geometry, mergeGeometry, overlapDetails } from './ranges.mjs';
@@ -114,7 +114,7 @@ function resourceList(values, label) {
 
 function readDb() {
   const file = path.join(home(), 'workflow.json');
-  const db = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { version: 2, sequence: 0, runs: {}, intents: {} };
+  const db = fs.existsSync(file) ? readJSON(file) : { version: 2, sequence: 0, runs: {}, intents: {} };
   if (db.version !== 2) fail('工作資料格式不支援；未轉換或覆寫');
   return db;
 }
@@ -167,7 +167,7 @@ function transaction(fn) {
     fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, host: os.hostname(), nonce: randomUUID() }));
     const db = readDb(), result = fn(db);
     db.sequence++;
-    atomicJSON(path.join(home(), 'workflow.json'), db);
+    atomicJSON(path.join(home(), 'workflow.json'), db, { keepPrevious: true });
     return result;
   } finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }

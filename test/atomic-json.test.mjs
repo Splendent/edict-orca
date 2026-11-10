@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { atomicJSON } from '../src/session.mjs';
+import { atomicJSON, readJSON } from '../src/session.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-atomic-'));
@@ -69,4 +69,91 @@ test('atomic JSON does not retry unrelated rename errors and preserves recovery 
   assert.equal(wait.mock.callCount(), 0);
   assert.equal(fs.readFileSync(file, 'utf8'), '{"original":true}\n');
   assert.equal(fs.readdirSync(dir).filter(x => x.endsWith('.tmp')).length, 1);
+});
+
+test('atomic JSON handles partial writes and syncs and closes before rename', t => {
+  const { file } = fixture(t), events = [], descriptors = new Map();
+  const open = fs.openSync, write = fs.writeSync, sync = fs.fsyncSync, close = fs.closeSync, rename = fs.renameSync;
+  t.mock.method(fs, 'openSync', (...args) => { const fd = open(...args); descriptors.set(fd, args[0]); return fd; });
+  t.mock.method(fs, 'writeSync', (fd, data, offset, length) => {
+    events.push('write'); return write(fd, data, offset, Math.min(3, length));
+  });
+  t.mock.method(fs, 'fsyncSync', fd => { events.push(descriptors.get(fd).endsWith('.tmp') ? 'file-sync' : 'directory-sync'); return sync(fd); });
+  t.mock.method(fs, 'closeSync', fd => { events.push(descriptors.get(fd).endsWith('.tmp') ? 'file-close' : 'directory-close'); return close(fd); });
+  t.mock.method(fs, 'renameSync', (...args) => { events.push('rename'); return rename(...args); });
+  atomicJSON(file, { text: '完整狀態' });
+  assert.deepEqual(readJSON(file), { text: '完整狀態' });
+  const tail = ['file-sync', 'file-close', 'rename'];
+  if (process.platform !== 'win32') tail.push('directory-sync', 'directory-close');
+  assert.deepEqual(events.slice(-tail.length), tail);
+  assert.ok(events.filter(x => x === 'write').length > 1);
+});
+
+test('failed file fsync closes and removes temp without renaming or changing original', t => {
+  const { dir, file } = fixture(t), error = new Error('sync failed');
+  t.mock.method(fs, 'fsyncSync', () => { throw error; });
+  const rename = t.mock.method(fs, 'renameSync', () => assert.fail('must not rename unsynced data'));
+  assert.throws(() => atomicJSON(file, { next: true }, { keepPrevious: true }), actual => actual === error);
+  assert.equal(rename.mock.callCount(), 0);
+  assert.deepEqual(fs.readdirSync(dir), ['state.json']);
+  assert.deepEqual(readJSON(file), { original: true });
+});
+
+test('supported platforms sync the parent directory after rename', t => {
+  const { dir, file } = fixture(t), events = [];
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+  t.after(() => Object.defineProperty(process, 'platform', platform));
+  const open = fs.openSync, sync = fs.fsyncSync, close = fs.closeSync, rename = fs.renameSync;
+  const directoryFd = 987654;
+  t.mock.method(fs, 'openSync', (...args) => args[0] === dir ? directoryFd : open(...args));
+  t.mock.method(fs, 'fsyncSync', fd => { if (fd === directoryFd) events.push('directory-sync'); else sync(fd); });
+  t.mock.method(fs, 'closeSync', fd => { if (fd === directoryFd) events.push('directory-close'); else close(fd); });
+  t.mock.method(fs, 'renameSync', (...args) => { events.push('rename'); return rename(...args); });
+  atomicJSON(file, { next: true });
+  assert.deepEqual(events, ['rename', 'directory-sync', 'directory-close']);
+});
+
+test('failed main rename leaves existing prev unchanged', t => {
+  const { file } = fixture(t);
+  atomicJSON(file, { sequence: 1 }, { keepPrevious: true });
+  const error = Object.assign(new Error('invalid rename'), { code: 'EXDEV' });
+  t.mock.method(fs, 'renameSync', () => { throw error; });
+  assert.throws(() => atomicJSON(file, { sequence: 2 }, { keepPrevious: true }), actual => actual === error);
+  assert.deepEqual(readJSON(file), { sequence: 1 });
+  assert.deepEqual(readJSON(file + '.prev'), { original: true });
+});
+
+test('prev rotates only after successful main rename and retains previous valid state', t => {
+  const { file } = fixture(t);
+  atomicJSON(file, { sequence: 1 }, { keepPrevious: true });
+  assert.deepEqual(readJSON(file + '.prev'), { original: true });
+  const rename = fs.renameSync;
+  let attempts = 0;
+  t.mock.method(fs, 'renameSync', (from, to) => {
+    if (to === file) {
+      assert.deepEqual(readJSON(file + '.prev'), { original: true });
+      if (++attempts === 1) throw Object.assign(new Error('busy'), { code: 'EPERM' });
+    } else if (to === file + '.prev') assert.deepEqual(readJSON(file), { sequence: 2 });
+    return rename(from, to);
+  });
+  t.mock.method(Atomics, 'wait', () => 'timed-out');
+  atomicJSON(file, { sequence: 2 }, { keepPrevious: true });
+  assert.equal(attempts, 2);
+  assert.deepEqual(readJSON(file + '.prev'), { sequence: 1 });
+});
+
+test('initial write has no prev and corrupt main never replaces usable prev', t => {
+  const { file } = fixture(t);
+  fs.unlinkSync(file);
+  atomicJSON(file, { sequence: 1 }, { keepPrevious: true });
+  assert.equal(fs.existsSync(file + '.prev'), false);
+  atomicJSON(file, { sequence: 2 }, { keepPrevious: true });
+  fs.writeFileSync(file, '\0\0\0');
+  assert.throws(() => atomicJSON(file, { sequence: 3 }, { keepPrevious: true }), SyntaxError);
+  assert.deepEqual(readJSON(file + '.prev'), { sequence: 1 });
+  assert.throws(() => readJSON(file), error => error.message.includes(file + '.prev') && /手動還原.*未覆寫主檔.*未改用 prev/.test(error.message));
+  assert.equal(fs.readFileSync(file, 'utf8'), '\0\0\0');
+  fs.writeFileSync(file + '.prev', 'broken');
+  assert.throws(() => readJSON(file), /沒有可解析的 prev/);
 });

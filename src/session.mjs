@@ -16,15 +16,58 @@ export function sessionId(explicit, env = process.env) {
   }
   return id;
 }
-export function atomicJSON(file, value) {
+function syncDirectory(directory) {
+  // Windows does not support opening directories for fsync through Node's fs API.
+  if (process.platform === 'win32') return;
+  let fd;
+  try {
+    fd = fs.openSync(directory, 'r');
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (!['EINVAL', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) throw error;
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+function durableTemp(temp, value) {
+  let fd;
+  try {
+    fd = fs.openSync(temp, 'wx', 0o600);
+    const data = Buffer.from(JSON.stringify(value) + '\n');
+    let offset = 0;
+    while (offset < data.length) {
+      const written = fs.writeSync(fd, data, offset, data.length - offset);
+      if (written === 0) throw new Error(`無法繼續寫入暫存檔：${temp}`);
+      offset += written;
+    }
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (fd !== undefined) { fs.closeSync(fd); fd = undefined; fs.unlinkSync(temp); }
+    throw error;
+  } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+export function atomicJSON(file, value, { keepPrevious = false } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const temp = `${file}.${randomUUID()}.tmp`;
+  let previous;
   try {
-    fs.writeFileSync(temp, JSON.stringify(value) + '\n', { flag: 'wx', mode: 0o600 });
-  } catch (error) {
-    if (fs.existsSync(temp)) fs.unlinkSync(temp);
-    throw error;
+    if (keepPrevious && fs.existsSync(file)) {
+      // Validate before linking: damaged state must never replace a good backup.
+      JSON.parse(fs.readFileSync(file, 'utf8'));
+      previous = `${file}.${randomUUID()}.prev.tmp`;
+      fs.linkSync(file, previous);
+    }
+    durableTemp(temp, value);
+    renameWithRetry(temp, file);
+    syncDirectory(path.dirname(file));
+    if (previous) {
+      renameWithRetry(previous, file + '.prev');
+      previous = undefined;
+      syncDirectory(path.dirname(file));
+    }
+  } finally {
+    if (previous && fs.existsSync(previous)) fs.unlinkSync(previous);
   }
+}
+function renameWithRetry(temp, file) {
   const deadline = performance.now() + 2000;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   let delay = 20;
@@ -42,6 +85,17 @@ export function atomicJSON(file, value) {
     }
   }
 }
+export function readJSON(file) {
+  const content = fs.readFileSync(file, 'utf8');
+  try { return JSON.parse(content); }
+  catch (error) {
+    let recoverable = false;
+    try { JSON.parse(fs.readFileSync(file + '.prev', 'utf8')); recoverable = true; } catch { /* No usable backup. */ }
+    throw new Error(`狀態主檔 JSON 解析失敗：${file}；` + (recoverable
+      ? `可用的前一份狀態位於 ${file}.prev，請確認後手動還原；未覆寫主檔，也未改用 prev`
+      : '沒有可解析的 prev 備份；未覆寫主檔'), { cause: error });
+  }
+}
 export function sessionFile(id) {
   sessionId(id, {});
   return path.join(home(), 'sessions', createHash('sha256').update(id).digest('hex') + '.json');
@@ -49,7 +103,7 @@ export function sessionFile(id) {
 export function readSession(id) {
   const file = sessionFile(id);
   if (!fs.existsSync(file)) return null;
-  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const state = readJSON(file);
   if (state.version !== 2 || state.session !== id || typeof state.active !== 'boolean') throw new Error(`對話狀態格式不正確或不是新版 v2：${file}`);
   validateConfig(state.config);
   return state;

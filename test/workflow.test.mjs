@@ -56,6 +56,15 @@ function fixture(t) {
   return { w, runtime, dir, project, proof, root, as, add, head, plan, approve, launch, zhongshu, menxia, shangshu, bingbu, xingbu, proposal };
 }
 
+test('workflow reports recoverable corrupt main without changing either file', t => {
+  const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
+  const previous = fs.readFileSync(file + '.prev', 'utf8');
+  fs.writeFileSync(file, '\0\0\0');
+  assert.throws(() => f.w.show('run-test'), error => error.message.includes(file + '.prev') && /手動還原/.test(error.message));
+  assert.equal(fs.readFileSync(file, 'utf8'), '\0\0\0');
+  assert.equal(fs.readFileSync(file + '.prev', 'utf8'), previous);
+});
+
 test('workflow retains the same lock while atomic rename retries', t => {
   const f = fixture(t), file = path.join(process.env.EDICT_HOME, 'workflow.json');
   const lock = path.join(process.env.EDICT_HOME, 'workflow.lock'), rename = fs.renameSync;
