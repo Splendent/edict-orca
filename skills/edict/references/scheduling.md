@@ -75,7 +75,7 @@ edict relay --run "$EDICT_RUN_ID" --session "$EDICT_SESSION_ID" --once --log /ab
 
 relay 每輪依序執行三步：
 
-1. settle：讀取原生 worker 清單，把原生已結束（與 `sync` 相同的判定）但 Edict 仍為 accepted 的操作標記為 settled，釋放 3 位 executor 的派工名額。沒有操作需要改變時不寫入狀態檔。`sync` 另外處理停止請求與分頁顯示，relay 不做這兩項。
+1. settle：讀取原生 worker 清單，把原生已結束（與 `sync` 相同的判定）但 Edict 尚未 settled 的操作標記為 settled，釋放 executor 名額。沒有操作需要改變時不寫入狀態檔。`sync` 另外處理停止請求與分頁顯示，relay 不做這兩項。已知風險：頭領的續辦若沿用同一個 dispatchId，可能依上一輪的原生 completed 狀態被標記為 settled；executor 不受影響，因為 executor 續辦一律取得新的 dispatchId。
 2. 轉送 owner-required 訊息，規則如上。
 3. 檢查在途 Dispatch 是否卡住：讀取代理終端的輸出與目前畫面，回報 `draft`（派工提示停在輸入框未送出）、`update-prompt`（Codex 的 Update available 提示）與 `menu-prompt`（畫面上的選單、核可或確認提示，或 Orca 回報的待人工回應）。`--unstick` 只在 liveness=live、輸入框內容屬於本 Dispatch 的派工提示（Orca 派工前言或喚醒訊息、Edict 工作說明開頭或該成員的 spec）、畫面沒有更新、選單或待人工回應提示時，於送出前重新讀取終端並送一個 CR；同一 relay 程序對同一 Dispatch 最多送一次。其他情況只回報。單次檢查可用 `edict stalls --run <RunID> --session <ID> [--unstick]`。
 
@@ -83,7 +83,7 @@ JSONL 每列都有 `at` 與 `runId`。轉送結果列沒有 `type` 欄位，欄�
 
 - `settle`：`settled` 陣列列出本輪改為 settled 的 operationId、dispatchId、memberId、role、position、previousState 與 nativeState。
 - `stall`：dispatchId、operationIds、memberId、handle、state、stage、liveness、agentWait、draft（前 200 字）、draftMatches、updatePrompt、menu、`findings` 與 `unstick`（`null`、`{sent:true}`，或 `{sent:false, reason|error}`）。沒有發現的 Dispatch 不記錄；同一 Dispatch 的同一查詢錯誤在同一程序只記錄一次。
-- `round-error`：phase（settle、relay 或 stalls）、error、code。只有無法連線或呼叫 Orca 的錯誤（例如 Orca 重啟期間的 `spawnSync orca ENOENT`）會記錄後於下一輪繼續；本輪已嘗試轉送後才發生的錯誤、Run 已封存、非 owner 與程式錯誤直接結束 relay。
+- `round-error`：phase（settle、relay 或 stalls）、error、code。只有無法連線 Orca 的錯誤（Orca 啟動失敗，例如重啟期間的 `spawnSync orca ENOENT`；回應無法解析；連線被拒或無法使用的錯誤碼）會記錄後於下一輪繼續；Orca 回傳的語意錯誤（例如 Run 已在 Orca 結束）、本輪已嘗試轉送後才發生的錯誤、Run 已封存、非 owner 與程式錯誤直接結束 relay。
 
 結束碼：有 manualRequired 的轉送結果或任何 round-error 時為 1，其餘為 0。stall 發現不影響結束碼。
 

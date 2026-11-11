@@ -7,6 +7,7 @@ const MENU_PATTERNS = [
   /Update available/i, /Press enter to (continue|confirm|select)/i, /^\s*[›❯▶]\s*\d+[.)]\s+\S/u,
   /\((y\/n|Y\/n|y\/N)\)|\[(y\/n|Y\/n|y\/N)\]/, /Do you trust/i, /Would you like to (run|make|apply|allow|proceed)/i,
 ];
+const CONNECTION_CODES = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOENT'];
 const hasHandle = (value, handle) => value && typeof value === 'object' &&
   (value.handle === handle || Object.values(value).some(child => hasHandle(child, handle)));
 
@@ -35,8 +36,9 @@ export class NativeRuntime {
   }
   call(args, input) {
     let result;
-    // nativeFailure marks errors from reaching or calling Orca (spawn failure, unparsable or failed response), so a
-    // polling caller can tell them from workflow refusals and programming errors. Argv preflight is not one.
+    // nativeFailure marks failures to reach Orca (spawn failure, unparsable response, or a refused/unavailable
+    // connection code), so a polling caller can retry them. A semantic ok:false refusal (for example an ended Run)
+    // and argv preflight are not marked.
     try { result = runOrca(orcaCommand(), nativeArgs(args), input === undefined ? {} : { input }); }
     catch (error) { if (error?.code !== 'EDICT_ARGV_TOO_LONG') error.nativeFailure = true; throw error; }
     let value;
@@ -46,7 +48,7 @@ export class NativeRuntime {
       const error = new Error(`Orca ${args.slice(0, 2).join(' ')} 失敗或未確認：${value.error?.message || result.stderr || JSON.stringify(value)}`);
       error.receipt = value;
       error.code = value.error?.code;
-      error.nativeFailure = true;
+      if (CONNECTION_CODES.includes(error.code) || /unavailable|unreachable|refused/i.test(error.code ?? '')) error.nativeFailure = true;
       throw error;
     }
     return value.result;

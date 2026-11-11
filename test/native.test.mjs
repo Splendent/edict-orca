@@ -229,6 +229,26 @@ test('native call failures are marked so relay can tell an unreachable Orca from
   assert.throws(() => new NativeRuntime().call(['orchestration', 'run-current']), error => error.nativeFailure === true && error.code === 'ENOENT');
 });
 
+test('a semantic ok:false refusal is not marked retryable but a refused connection code is', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-native-refusal-'));
+  const preload = path.join(dir, 'reply.cjs');
+  const previous = { command: process.env.ORCA_CLI_COMMAND, options: process.env.NODE_OPTIONS, code: process.env.EDICT_TEST_CODE };
+  t.after(() => {
+    for (const [key, value] of [['ORCA_CLI_COMMAND', previous.command], ['NODE_OPTIONS', previous.options], ['EDICT_TEST_CODE', previous.code]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  // Node itself stands in for orca: the preload prints the native response and exits before the argv is run.
+  fs.writeFileSync(preload, 'process.stdout.write(JSON.stringify({ok:false,error:{code:process.env.EDICT_TEST_CODE,message:"refused"}}));process.exit(1);');
+  process.env.ORCA_CLI_COMMAND = process.execPath;
+  process.env.NODE_OPTIONS = `--require ${JSON.stringify(preload)}`;
+  process.env.EDICT_TEST_CODE = 'run_not_found';
+  assert.throws(() => new NativeRuntime().call(['orchestration', 'run-current']), error => error.code === 'run_not_found' && error.nativeFailure === undefined);
+  process.env.EDICT_TEST_CODE = 'runtime_unavailable';
+  assert.throws(() => new NativeRuntime().call(['orchestration', 'run-current']), error => error.nativeFailure === true);
+});
+
 function renameFixture() {
   return { detail: { dispatch: dispatch({ assigneeHandle: 'term_worker', assigneePaneKey: 'tab-worker:leaf-worker' }),
     worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker' } },
