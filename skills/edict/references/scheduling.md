@@ -71,7 +71,21 @@ edict relay --run "$EDICT_RUN_ID" --session "$EDICT_SESSION_ID" --once --log /ab
 
 預設每 30 秒讀取 pending.ownerRequired，`--interval <秒>` 可改輪詢間隔；`--once` 只跑一輪，適合定期檢查呼叫。Ctrl+C 結束輪詢並關閉紀錄檔；已開始的原生呼叫仍完成既有收據保存。relay 逐則沿用 team forward 的原始 body、kind、世代、路由、控制與資源檢查，所有原生呼叫都在 workflow 鎖外，沒有業務判斷。
 
-每則自動嘗試最多一次，嘗試紀錄與 forward 准入在同一交易保存，因此多個 relay 或程序重啟不重複送達。stdout 與可選的 JSONL 紀錄包含 messageId（原訊息）、forwardedMessageId（Edict 新訊息）、nativeMessageId（收據若有）、state、originalState、manualRequired 與錯誤。成功記錄「已由 relay 轉送 <新 id>」，不額外通知或喚醒寄件頭領。拒絕或結果未知時保留 forward 既有狀態與證據，不自動重試；manualRequired=true 交人工核對。明確拒絕後原訊息保留 owner-required；未知結果保留 forwarding 及未知操作，先由原發起身分 recover 核對，禁止直接重送。准入檢查失敗也保存一次嘗試，原訊息狀態不變。需要人工處理的單輪結束碼為 1，成功或沒有待轉訊息為 0。
+每則自動嘗試最多一次，嘗試紀錄與 forward 准入在同一交易保存，因此多個 relay 或程序重啟不重複送達。stdout 與可選的 JSONL 紀錄包含 messageId（原訊息）、forwardedMessageId（Edict 新訊息）、nativeMessageId（收據若有）、state、originalState、manualRequired 與錯誤。成功記錄「已由 relay 轉送 <新 id>」，不額外通知或喚醒寄件頭領。拒絕或結果未知時保留 forward 既有狀態與證據，不自動重試；manualRequired=true 交人工核對。明確拒絕後原訊息保留 owner-required；未知結果保留 forwarding 及未知操作，先由原發起身分 recover 核對，禁止直接重送。准入檢查失敗也保存一次嘗試，原訊息狀態不變。
+
+relay 每輪依序執行三步：
+
+1. settle：讀取原生 worker 清單，把原生已結束（與 `sync` 相同的判定）但 Edict 仍為 accepted 的操作標記為 settled，釋放 3 位 executor 的派工名額。沒有操作需要改變時不寫入狀態檔。`sync` 另外處理停止請求與分頁顯示，relay 不做這兩項。
+2. 轉送 owner-required 訊息，規則如上。
+3. 檢查在途 Dispatch 是否卡住：讀取代理終端的輸出與目前畫面，回報 `draft`（派工提示停在輸入框未送出）、`update-prompt`（Codex 的 Update available 提示）與 `menu-prompt`（畫面上的選單、核可或確認提示，或 Orca 回報的待人工回應）。`--unstick` 只在 liveness=live、輸入框內容屬於本 Dispatch 的派工提示（Orca 派工前言或喚醒訊息、Edict 工作說明開頭或該成員的 spec）、畫面沒有更新、選單或待人工回應提示時，於送出前重新讀取終端並送一個 CR；同一 relay 程序對同一 Dispatch 最多送一次。其他情況只回報。單次檢查可用 `edict stalls --run <RunID> --session <ID> [--unstick]`。
+
+JSONL 每列都有 `at` 與 `runId`。轉送結果列沒有 `type` 欄位，欄位如上；其餘列以 `type` 區分：
+
+- `settle`：`settled` 陣列列出本輪改為 settled 的 operationId、dispatchId、memberId、role、position、previousState 與 nativeState。
+- `stall`：dispatchId、operationIds、memberId、handle、state、stage、liveness、agentWait、draft（前 200 字）、draftMatches、updatePrompt、menu、`findings` 與 `unstick`（`null`、`{sent:true}`，或 `{sent:false, reason|error}`）。沒有發現的 Dispatch 不記錄；同一 Dispatch 的同一查詢錯誤在同一程序只記錄一次。
+- `round-error`：phase（settle、relay 或 stalls）、error、code。只有無法連線或呼叫 Orca 的錯誤（例如 Orca 重啟期間的 `spawnSync orca ENOENT`）會記錄後於下一輪繼續；本輪已嘗試轉送後才發生的錯誤、Run 已封存、非 owner 與程式錯誤直接結束 relay。
+
+結束碼：有 manualRequired 的轉送結果或任何 round-error 時為 1，其餘為 0。stall 發現不影響結束碼。
 
 ## 狀態、結果未知與恢復
 
