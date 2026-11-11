@@ -31,7 +31,7 @@ function fixture(t) {
       return { dispatchId, taskId, runId };
     },
     workers() { return this.rows; },
-    stallEvidence() { return { handle: 'term_test', state: 'ready', stage: 'running', liveness: 'live', terminalStatus: 'running', draft: null, updatePrompt: false }; },
+    stallEvidence() { return { handle: 'term_test', state: 'ready', stage: 'running', liveness: 'live', agentWait: null, terminalStatus: 'running', draft: null, updatePrompt: false, menu: null }; },
     submitDraft() { assert.fail('unexpected draft submission'); },
     rename(runId, dispatchId, title) { return { state: 'applied', handle: `term_${dispatchId}`, title }; },
     stop(dispatchId) { this.rows.find(x => x.dispatchId === dispatchId).state = 'stopped'; return { dispatchId, state: 'stopped' }; },
@@ -239,30 +239,65 @@ test('relay still stops when a round fails after a forward was attempted', async
   assert.equal(forwards, 1);
 });
 
-test('stalls reports held drafts and update prompts and sends one CR only for a live draft when unstick is given', t => {
+test('relay ends on non-Orca errors and refuses an archived Run before polling', async t => {
+  const f = relayFixture(t);
+  f.w.settle = () => { throw new TypeError('programming error'); };
+  await assert.rejects(runRelay(f.w, 'run-test', { interval: 0.001, output: () => {} }), TypeError);
+  const g = relayFixture(t);
+  g.w.relay = () => { throw new Error('只有原對話 owner 可以執行 relay'); };
+  await assert.rejects(runRelay(g.w, 'run-test', { interval: 0.001, output: () => {} }), /owner/);
+  const h = relayFixture(t);
+  h.w.run = runId => ({ ...Workflow.prototype.run.call(h.w, runId), archived: true });
+  await assert.rejects(runRelay(h.w, 'run-test', { interval: 0.001, output: () => {} }), /封存/);
+});
+
+test('stalls sends one CR only for a live draft of this Dispatch with no prompt on screen, once per caller set', t => {
   const f = fixture(t), started = f.launch();
   f.root();
   const sent = [];
-  f.runtime.submitDraft = handle => { sent.push(handle); return { ok: true }; };
-  const evidence = { handle: 'term_held', state: 'start_unknown', stage: 'turn_start_unobserved', liveness: 'live', terminalStatus: 'running', draft: 'Held dispatch prompt', updatePrompt: false };
+  f.runtime.submitDraft = (runId, dispatchId, draft) => { sent.push([dispatchId, draft]); return { sent: true, handle: 'term_held' }; };
+  const evidence = { handle: 'term_held', state: 'start_unknown', stage: 'turn_start_unobserved', liveness: 'live', agentWait: null, terminalStatus: 'running',
+    draft: 'Write assigned file and submit evidence', updatePrompt: false, menu: null };
   f.runtime.stallEvidence = (runId, dispatchId) => dispatchId === started.member.dispatchId ? evidence : { ...evidence, handle: 'term_idle', draft: null };
-  const target = rows => rows.find(x => x.dispatchId === started.member.dispatchId);
-  let row = target(f.w.stalls('run-test'));
+  const target = (options) => f.w.stalls('run-test', options).find(x => x.dispatchId === started.member.dispatchId);
+  let row = target();
   assert.deepEqual(row.findings, ['draft']);
+  assert.equal(row.draftMatches, true);
   assert.equal(row.unstick, null);
   assert.deepEqual(sent, []);
-  row = target(f.w.stalls('run-test', { unstick: true }));
-  assert.deepEqual(row.unstick, { sent: true });
-  assert.deepEqual(sent, ['term_held']);
+  const submitted = new Set();
+  assert.deepEqual(target({ unstick: true, submitted }).unstick, { sent: true, handle: 'term_held' });
+  assert.deepEqual(sent, [[started.member.dispatchId, evidence.draft]]);
+  assert.equal(target({ unstick: true, submitted }).unstick.sent, false);
+  const refusals = [
+    { draft: 'half typed by a human' },
+    { draft: 'You are working inside Orca.\nTask: ...', updatePrompt: true },
+    { draft: 'You have 1 orchestration message. Run `orca orchestration check`.', menu: 'Would you like to run the following command?' },
+    { agentWait: { evidence: 'hook' } },
+    { liveness: 'unverifiable' },
+  ];
+  for (const change of refusals) {
+    const saved = { ...evidence };
+    Object.assign(evidence, change);
+    row = target({ unstick: true });
+    assert.equal(row.unstick.sent, false, JSON.stringify(change));
+    Object.assign(evidence, saved);
+  }
+  assert.equal(target().draftMatches, true);
+  evidence.draft = 'You are working inside Orca. Dispatch preamble';
+  assert.equal(target().draftMatches, true);
   evidence.updatePrompt = true;
-  row = target(f.w.stalls('run-test', { unstick: true }));
-  assert.deepEqual(row.findings, ['draft', 'update-prompt']);
-  assert.equal(row.unstick.sent, false);
-  evidence.updatePrompt = false; evidence.liveness = 'unverifiable';
-  assert.equal(target(f.w.stalls('run-test', { unstick: true })).unstick.sent, false);
-  assert.deepEqual(sent, ['term_held']);
+  assert.deepEqual(target().findings, ['draft', 'update-prompt']);
+  assert.equal(sent.length, 1);
   f.as(f.bingbu);
   assert.throws(() => f.w.stalls('run-test'), /owner/);
+});
+
+test('relay settle skips the write transaction when nothing natively ended', async t => {
+  const f = fixture(t); f.launch(); f.root();
+  const file = path.join(process.env.EDICT_HOME, 'workflow.json'), before = fs.readFileSync(file, 'utf8');
+  assert.deepEqual(f.w.settle('run-test', { onlyChanges: true }), []);
+  assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
 test('relay logs stall findings to its JSONL and reports each stall query error once', async t => {

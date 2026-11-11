@@ -173,34 +173,60 @@ test('request preserves pending accepted checkpoints and completed receipts for 
   assert.equal(native.request('request-example'), completed);
 });
 
-test('stallEvidence reads the verified assignee terminal and reports a held draft and the update prompt', () => {
-  const detail = { dispatch: dispatch({ assigneeHandle: 'term_worker' }),
+function stallDetail(overrides = {}) {
+  return { dispatch: dispatch({ assigneeHandle: 'term_worker' }),
     worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker', state: 'start_unknown', stage: 'turn_start_unobserved' },
-    projection: { liveness: { verdict: 'live' } } };
-  const read = { terminal: { handle: 'term_worker', status: 'running', tail: ['Update available! 0.1 -> 0.2'], draft: 'Held prompt' } };
-  const { native, calls } = runtime(detail, read);
+    projection: { liveness: { verdict: 'live' } }, observation: { status: 'live', agentWait: null }, ...overrides };
+}
+const stream = (tail, draft) => ({ terminal: { handle: 'term_worker', status: 'running', tail, ...(draft ? { draft } : {}) } });
+const screen = tail => ({ terminal: { handle: 'term_worker', status: 'running', source: 'screen', tail } });
+
+test('stallEvidence reads the verified assignee terminal stream and screen for drafts, update and menu prompts', () => {
+  const { native, calls } = runtime(stallDetail(), stream(['Update available! 0.1 -> 0.2'], 'Held prompt'), screen(['› 1. Update now', '  2. Skip']));
   assert.deepEqual(native.stallEvidence(runId, 'ctx-example'), { handle: 'term_worker', state: 'start_unknown', stage: 'turn_start_unobserved',
-    liveness: 'live', terminalStatus: 'running', draft: 'Held prompt', updatePrompt: true });
+    liveness: 'live', agentWait: null, terminalStatus: 'running', screenSource: 'screen', draft: 'Held prompt', updatePrompt: true, menu: '› 1. Update now' });
   assert.deepEqual(calls[1].args, ['terminal', 'read', '--terminal', 'term_worker', '--limit', '40']);
-  const quiet = runtime(detail, { terminal: { handle: 'term_worker', status: 'running', tail: ['working'] } }).native.stallEvidence(runId, 'ctx-example');
-  assert.equal(quiet.draft, null); assert.equal(quiet.updatePrompt, false);
+  assert.deepEqual(calls[2].args, ['terminal', 'read', '--terminal', 'term_worker', '--screen']);
+  const quiet = runtime(stallDetail(), stream(['working']), screen(['› You have 1 orchestration message.'])).native.stallEvidence(runId, 'ctx-example');
+  assert.equal(quiet.draft, null); assert.equal(quiet.updatePrompt, false); assert.equal(quiet.menu, null);
+  for (const line of ['Would you like to run the following command?', 'Do you trust the files in this folder?', 'Press enter to continue', 'Proceed? (y/n)']) {
+    assert.equal(runtime(stallDetail(), stream([]), screen([line])).native.stallEvidence(runId, 'ctx-example').menu, line);
+  }
 });
 
 test('stallEvidence never reads a terminal whose Dispatch, Run or handle is unverified', () => {
-  const detail = { dispatch: dispatch({ assigneeHandle: 'term_worker' }), worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker' } };
+  const detail = stallDetail();
   for (const bad of [{ ...detail, dispatch: { ...detail.dispatch, runId: 'other' } }, { ...detail, worker: { ...detail.worker, agentTerminalHandle: 'term_other' } }]) {
     const { native, calls } = runtime(bad);
     assert.throws(() => native.stallEvidence(runId, 'ctx-example'), /身分未確認/);
     assert.equal(calls.length, 1);
   }
   assert.throws(() => runtime(detail, { terminal: { handle: 'term_other', tail: [] } }).native.stallEvidence(runId, 'ctx-example'), /handle/);
+  assert.throws(() => runtime(detail, stream([]), { terminal: { handle: 'term_other', tail: [] } }).native.stallEvidence(runId, 'ctx-example'), /handle/);
 });
 
-test('submitDraft sends only a bare carriage return to the terminal', () => {
-  const { native, calls } = runtime({ ok: true });
-  native.submitDraft('term_worker');
-  assert.deepEqual(calls[0].args, ['terminal', 'send', '--terminal', 'term_worker', '--text', '\r']);
-  assert.throws(() => native.submitDraft(''), /handle/);
+test('submitDraft re-reads the terminal and sends only a bare carriage return for the same held draft', () => {
+  const { native, calls } = runtime(stallDetail(), stream([], 'Held prompt'), screen(['› Held prompt']), { ok: true });
+  assert.deepEqual(native.submitDraft(runId, 'ctx-example', 'Held prompt'), { sent: true, handle: 'term_worker' });
+  assert.deepEqual(calls.at(-1).args, ['terminal', 'send', '--terminal', 'term_worker', '--text', '\r']);
+  const refused = [
+    [stallDetail(), stream([], 'Changed by a human'), screen([])],
+    [stallDetail({ projection: { liveness: { verdict: 'exited' } } }), stream([], 'Held prompt'), screen([])],
+    [stallDetail(), stream([], 'Held prompt'), screen(['Would you like to run the following command?'])],
+    [stallDetail({ observation: { status: 'live', agentWait: { evidence: 'prompt-text' } } }), stream([], 'Held prompt'), screen([])],
+  ];
+  for (const responses of refused) {
+    const { native: other, calls: made } = runtime(...responses);
+    assert.throws(() => other.submitDraft(runId, 'ctx-example', 'Held prompt'), /未送出/);
+    assert.equal(made.some(x => x.args[1] === 'send'), false);
+  }
+});
+
+test('native call failures are marked so relay can tell an unreachable Orca from workflow refusals', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-native-missing-'));
+  const previous = process.env.ORCA_CLI_COMMAND; process.env.ORCA_CLI_COMMAND = path.join(dir, 'missing-orca');
+  t.after(() => { if (previous === undefined) delete process.env.ORCA_CLI_COMMAND; else process.env.ORCA_CLI_COMMAND = previous; fs.rmSync(dir, { recursive: true, force: true }); });
+  assert.throws(() => new NativeRuntime().call(['orchestration', 'run-current']), error => error.nativeFailure === true && error.code === 'ENOENT');
 });
 
 function renameFixture() {
