@@ -217,6 +217,19 @@ function transaction(fn) {
   } finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }
 
+// A held composer draft belongs to this Dispatch only when it is Orca's own dispatch preamble or wake-up notice, the
+// Edict worker spec header (roles.mjs workerSpec), or carries the start of one of the member's Edict specs.
+// Anything else may be a human's half-typed text.
+const squash = value => String(value ?? '').replace(/\s+/gu, ' ').trim();
+function dispatchDraft(draft, specs) {
+  const text = squash(draft);
+  if (/^You are working inside Orca\b/i.test(text) || /^# Edict /u.test(text) || /^You have \d+ (new )?orchestration messages?\b/i.test(text)) return true;
+  return specs.some(spec => {
+    const body = squash(spec);
+    if (body.length < 20) return false;
+    return text.includes(body.slice(0, 80)) || text.length >= 20 && body.startsWith(text);
+  });
+}
 function getRun(db, session, runId) {
   const run = db.runs[runId];
   if (!run || run.session !== session) fail('Run 不屬於本對話');
@@ -921,12 +934,16 @@ export class Workflow {
     // An interrupted/unknown forward is no longer owner-required. Surface its
     // durable attempt for human recovery as well, without making another call.
     pending.push(...snapshot.messages.filter(x => x.relayAttempt && x.state === 'forwarding').map(x => ({ messageId: x.id })));
+    // runRelay keeps polling after a failed round only when no forward was attempted in that round.
+    let attempted = false;
+    try {
     for (const { messageId } of pending) {
       if (stopped()) break;
       const original = this.run(runId).messages.find(x => x.id === messageId);
       if (original.state !== 'owner-required' && !(original.relayAttempt && original.state === 'forwarding')) continue;
       let error;
       if (!original.relayAttempt && original.state === 'owner-required') {
+        attempted = true;
         try { this.forward(runId, messageId, true); }
         catch (failure) {
           error = failure.message;
@@ -947,6 +964,10 @@ export class Workflow {
         skipped: !!original.relayAttempt, error: forwarded?.error || saved.relayAttempt?.error || error || null,
         note: state === 'delivered' ? `已由 relay 轉送 ${forwarded.id}` : 'relay 不重送；交由人工核對或 recover' };
       results.push(row); onResult(row);
+    }
+    } catch (error) {
+      if (attempted && error && typeof error === 'object') error.relayForwardAttempted = true;
+      throw error;
     }
     return results;
   }
@@ -995,22 +1016,73 @@ export class Workflow {
     if (receipt) return this.recordReceipt(runId, operationId, receipt);
     return { request, operationId, state: op.state, next: '原生結果尚未核對；保留占用，不重新派工' };
   }
-  sync(runId) {
+  // Records native worker rows and settles operations whose execution natively ended. Returns the operations that
+  // changed to settled in this call. Used by sync and by every relay round so finished executors free capacity.
+  // onlyChanges (relay) skips the write transaction when no operation would change to settled.
+  settle(runId, { onlyChanges = false } = {}) {
     const rows = this.runtime.workers(runId);
     const followUps = followUpSettlements(rows, this.runtime, runId);
-    this.mutate(runId, run => {
+    const ends = row => executionSettled(row) || followUps.has(row.dispatchId || row.id);
+    if (onlyChanges) {
+      const operations = Object.values(this.run(runId).operations);
+      if (!rows.some(row => ends(row) && operations.some(op => op.dispatchId === (row.dispatchId || row.id) && op.state !== 'settled'))) return [];
+    }
+    return this.mutate(runId, run => {
+      const settled = [];
       for (const row of rows) {
         const id = row.dispatchId || row.id;
         for (const op of Object.values(run.operations).filter(x => x.dispatchId === id)) {
           op.native = row;
           op.observedAt = new Date().toISOString();
-          if (executionSettled(row) || followUps.has(id)) {
+          if (ends(row)) {
+            if (op.state !== 'settled') settled.push({ operationId: op.id, dispatchId: id, memberId: op.memberId, role: op.role, position: op.position, previousState: op.state, nativeState: row.workerState || row.state || row.status || null });
             op.state = 'settled'; op.stopRequested = false;
             if (followUps.has(id)) op.settlementEvidence = followUps.get(id);
           }
         }
       }
+      return settled;
     }, { active: false });
+  }
+  // Read-only unless unstick: finds in-flight Dispatches whose prompt is held unsent in the composer (draft), whose
+  // terminal shows the agent's "Update available" prompt, or whose screen shows a selection or approval prompt.
+  // With unstick, one bare CR is sent only for a live draft that matches this Dispatch's own prompt (Orca preamble,
+  // Orca wake-up notice, or the operation spec), with no prompt on screen, at most once per Dispatch per caller Set.
+  stalls(runId, { unstick = false, submitted = new Set() } = {}) {
+    const snapshot = this.run(runId);
+    if (!this.runtime.identity(runId).owner) fail('只有原對話 owner 可以檢查或解除卡住的派工');
+    const targets = new Map();
+    for (const op of Object.values(snapshot.operations)) {
+      if (!['submitted', 'accepted'].includes(op.state) || !validId(op.dispatchId)) continue;
+      const target = targets.get(op.dispatchId) || { dispatchId: op.dispatchId, operationIds: [], memberId: op.memberId, role: op.role, position: op.position, work: op.work || null };
+      target.operationIds.push(op.id); targets.set(op.dispatchId, target);
+    }
+    return [...targets.values()].map(target => {
+      let evidence;
+      try { evidence = this.runtime.stallEvidence(runId, target.dispatchId); }
+      catch (error) { return { ...target, findings: [], error: error.message }; }
+      const findings = [...(evidence.draft ? ['draft'] : []), ...(evidence.updatePrompt ? ['update-prompt'] : []),
+        ...(evidence.menu && !evidence.updatePrompt || evidence.agentWait ? ['menu-prompt'] : [])];
+      const specs = Object.values(snapshot.operations).filter(op => op.memberId === target.memberId).map(op => op.spec);
+      const draftMatches = !!evidence.draft && dispatchDraft(evidence.draft, specs);
+      const row = { ...target, ...evidence, draft: evidence.draft ? evidence.draft.slice(0, 200) : null, draftMatches, findings, unstick: null };
+      if (unstick && evidence.draft) {
+        const refuse = reason => { row.unstick = { sent: false, reason }; };
+        if (evidence.liveness !== 'live') refuse(`liveness=${evidence.liveness}；未送出`);
+        else if (!draftMatches) refuse('輸入框內容不符合本 Dispatch 的派工提示，可能是人工輸入；只回報，未送出');
+        else if (evidence.updatePrompt || evidence.menu || evidence.agentWait) refuse('畫面有更新、選單或待人工回應的提示；先由人工處理，未送出');
+        else if (submitted.has(target.dispatchId)) refuse('本程序已對此 Dispatch 送過一次 CR；不再送出');
+        else {
+          submitted.add(target.dispatchId);
+          try { row.unstick = this.runtime.submitDraft(runId, target.dispatchId, evidence.draft); }
+          catch (error) { row.unstick = { sent: false, error: error.message }; }
+        }
+      }
+      return row;
+    });
+  }
+  sync(runId) {
+    this.settle(runId);
     const stops = this.drainStops(runId);
     const presentations = Object.values(this.run(runId).members).filter(member => member.dispatchId).map(member => this.present(runId, member.id));
     return { ...this.show(runId), stops, presentations };

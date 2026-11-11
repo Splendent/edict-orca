@@ -44,8 +44,12 @@ init 先完成代理與模型選擇；Cursor 協調者須確認原生模式。�
   edict review record --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team send <成員ID> --run <RunID> --work <W-ID> --spec-file <JSON|-> --session <ID>
   edict team forward <交接ID> --run <RunID> --session <ID>
-  edict relay --run <RunID> --session <ID> [--once] [--interval <秒，預設30>] [--log <JSONL檔>]
-    （僅原對話 owner；原樣轉送 owner-required，每則自動嘗試一次，失敗交人工處理；Ctrl+C 結束）
+  edict relay --run <RunID> --session <ID> [--once] [--interval <秒，預設30>] [--log <JSONL檔>] [--unstick]
+    （僅原對話 owner；每輪先 settle 原生已結束的操作，再原樣轉送 owner-required（每則自動嘗試一次，失敗交人工處理），
+     最後檢查卡住的派工；Orca 暫時無法連線時記錄本輪錯誤並於下一輪繼續；Ctrl+C 結束）
+  edict stalls --run <RunID> --session <ID> [--unstick]
+    （僅原對話 owner；列出在途 Dispatch 終端的 draft（派工提示停在輸入框未送出）與 update-prompt（Update available）；
+     --unstick 只對 liveness=live 且沒有更新提示的 draft 送出一個 CR，不重送提示內容；update-prompt 只回報）
   edict team replace <成員ID> --run <RunID> --spec-file <JSON|-> --session <ID>
     （僅直接上級；原成員須已結束。新成員沿用原職務與範圍，使用目前角色設定，例如 config set 換代理後）
   edict control pause|resume|cancel|restart --run <RunID> [--work <W-ID>] --session <ID>
@@ -133,7 +137,7 @@ export async function main(argv) {
     'base-branch': { type: 'string' }, title: { type: 'string' },
     work: { type: 'string' }, operation: { type: 'string' }, position: { type: 'string' }, inherit: { type: 'boolean' }, objective: { type: 'string' },
     file: { type: 'string' }, note: { type: 'string' },
-    once: { type: 'boolean' }, interval: { type: 'string' }, log: { type: 'string' },
+    once: { type: 'boolean' }, interval: { type: 'string' }, log: { type: 'string' }, unstick: { type: 'boolean' },
   } });
   const [command, sub, role] = positionals;
   if (options.version) {
@@ -160,7 +164,8 @@ export async function main(argv) {
     sync: ['session', 'run'],
     recover: ['session', 'run', 'operation'],
     handoff: ['session', 'run', 'file', 'note'],
-    relay: ['session', 'run', 'once', 'interval', 'log'],
+    relay: ['session', 'run', 'once', 'interval', 'log', 'unstick'],
+    stalls: ['session', 'run', 'unstick'],
   };
   if (!allowed[command]) throw new Error(`未知命令：${command}；執行 edict help`);
   for (const key of Object.keys(options)) if (!allowed[command].includes(key)) throw new Error(`${command} 不接受 --${key}`);
@@ -244,6 +249,11 @@ export async function main(argv) {
   if (command === 'relay') {
     if (!options.session) throw new Error('relay 必須明確指定 --session');
     return runRelay(workflow, options.run, options);
+  }
+  if (command === 'stalls') {
+    const rows = workflow.stalls(options.run, { unstick: !!options.unstick });
+    print({ checked: rows.length, findings: rows.filter(row => row.findings.length || row.unstick), errors: rows.filter(row => row.error) });
+    return 0;
   }
   function input() {
     if (!options['spec-file']) throw new Error('須指定 --spec-file <JSON檔案|->');
