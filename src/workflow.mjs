@@ -921,12 +921,16 @@ export class Workflow {
     // An interrupted/unknown forward is no longer owner-required. Surface its
     // durable attempt for human recovery as well, without making another call.
     pending.push(...snapshot.messages.filter(x => x.relayAttempt && x.state === 'forwarding').map(x => ({ messageId: x.id })));
+    // runRelay keeps polling after a failed round only when no forward was attempted in that round.
+    let attempted = false;
+    try {
     for (const { messageId } of pending) {
       if (stopped()) break;
       const original = this.run(runId).messages.find(x => x.id === messageId);
       if (original.state !== 'owner-required' && !(original.relayAttempt && original.state === 'forwarding')) continue;
       let error;
       if (!original.relayAttempt && original.state === 'owner-required') {
+        attempted = true;
         try { this.forward(runId, messageId, true); }
         catch (failure) {
           error = failure.message;
@@ -947,6 +951,10 @@ export class Workflow {
         skipped: !!original.relayAttempt, error: forwarded?.error || saved.relayAttempt?.error || error || null,
         note: state === 'delivered' ? `已由 relay 轉送 ${forwarded.id}` : 'relay 不重送；交由人工核對或 recover' };
       results.push(row); onResult(row);
+    }
+    } catch (error) {
+      if (attempted && error && typeof error === 'object') error.relayForwardAttempted = true;
+      throw error;
     }
     return results;
   }
@@ -995,22 +1003,59 @@ export class Workflow {
     if (receipt) return this.recordReceipt(runId, operationId, receipt);
     return { request, operationId, state: op.state, next: '原生結果尚未核對；保留占用，不重新派工' };
   }
-  sync(runId) {
+  // Records native worker rows and settles operations whose execution natively ended. Returns the operations that
+  // changed to settled in this call. Used by sync and by every relay round so finished executors free capacity.
+  settle(runId) {
     const rows = this.runtime.workers(runId);
     const followUps = followUpSettlements(rows, this.runtime, runId);
-    this.mutate(runId, run => {
+    return this.mutate(runId, run => {
+      const settled = [];
       for (const row of rows) {
         const id = row.dispatchId || row.id;
         for (const op of Object.values(run.operations).filter(x => x.dispatchId === id)) {
           op.native = row;
           op.observedAt = new Date().toISOString();
           if (executionSettled(row) || followUps.has(id)) {
+            if (op.state !== 'settled') settled.push({ operationId: op.id, dispatchId: id, memberId: op.memberId, role: op.role, position: op.position, previousState: op.state, nativeState: row.workerState || row.state || row.status || null });
             op.state = 'settled'; op.stopRequested = false;
             if (followUps.has(id)) op.settlementEvidence = followUps.get(id);
           }
         }
       }
+      return settled;
     }, { active: false });
+  }
+  // Read-only unless unstick: finds in-flight Dispatches whose prompt is held unsent in the composer (draft) or
+  // whose terminal shows the agent's "Update available" prompt. With unstick, a live draft without an update
+  // prompt gets one bare CR; the update prompt is only reported because Enter there would choose an option.
+  stalls(runId, { unstick = false } = {}) {
+    const snapshot = this.run(runId);
+    if (!this.runtime.identity(runId).owner) fail('只有原對話 owner 可以檢查或解除卡住的派工');
+    const targets = new Map();
+    for (const op of Object.values(snapshot.operations)) {
+      if (!['submitted', 'accepted'].includes(op.state) || !validId(op.dispatchId)) continue;
+      const target = targets.get(op.dispatchId) || { dispatchId: op.dispatchId, operationIds: [], memberId: op.memberId, role: op.role, position: op.position, work: op.work || null };
+      target.operationIds.push(op.id); targets.set(op.dispatchId, target);
+    }
+    return [...targets.values()].map(target => {
+      let evidence;
+      try { evidence = this.runtime.stallEvidence(runId, target.dispatchId); }
+      catch (error) { return { ...target, findings: [], error: error.message }; }
+      const findings = [...(evidence.draft ? ['draft'] : []), ...(evidence.updatePrompt ? ['update-prompt'] : [])];
+      const row = { ...target, ...evidence, draft: evidence.draft ? evidence.draft.slice(0, 200) : null, findings, unstick: null };
+      if (unstick && evidence.draft) {
+        if (evidence.liveness !== 'live') row.unstick = { sent: false, reason: `liveness=${evidence.liveness}；未送出` };
+        else if (evidence.updatePrompt) row.unstick = { sent: false, reason: '終端同時顯示 Update available；先由人工處理更新提示，未送出' };
+        else {
+          try { this.runtime.submitDraft(evidence.handle); row.unstick = { sent: true }; }
+          catch (error) { row.unstick = { sent: false, error: error.message }; }
+        }
+      }
+      return row;
+    });
+  }
+  sync(runId) {
+    this.settle(runId);
     const stops = this.drainStops(runId);
     const presentations = Object.values(this.run(runId).members).filter(member => member.dispatchId).map(member => this.present(runId, member.id));
     return { ...this.show(runId), stops, presentations };

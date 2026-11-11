@@ -129,6 +129,30 @@ export class NativeRuntime {
     if (['completed', 'succeeded', 'stopped'].includes(w.state) && w.stage === 'settled') return { ended: true, reason: 'execution-settled' };
     return { ended: false, reason: 'execution-unconfirmed' };
   }
+  // Read-only stall evidence: a dispatch prompt held unsent in the agent composer (Orca reports it as the UI-only
+  // `draft` field of terminal read) or the Codex "Update available" startup prompt shown on the terminal.
+  stallEvidence(runId, dispatchId) {
+    const data = this.call(['orchestration', 'worker-show', '--dispatch', dispatchId]);
+    const d = data?.dispatch, w = data?.worker;
+    if (d?.id !== dispatchId || d.runId !== runId || !validId(d.assigneeHandle) || w?.dispatchId !== d.id || w.agentTerminalHandle !== d.assigneeHandle) {
+      throw new Error('原生 Dispatch、Run 或代理終端身分未確認；未讀取終端');
+    }
+    const handle = d.assigneeHandle;
+    const terminal = this.call(['terminal', 'read', '--terminal', handle, '--limit', '40'])?.terminal;
+    if (terminal?.handle !== handle) throw new Error('終端讀取結果的 handle 與 Dispatch 不符');
+    const tail = Array.isArray(terminal.tail) ? terminal.tail : [];
+    return {
+      handle, state: w.state ?? null, stage: w.stage ?? null, liveness: data.projection?.liveness?.verdict ?? null,
+      terminalStatus: terminal.status ?? null,
+      draft: typeof terminal.draft === 'string' && terminal.draft.trim() ? terminal.draft : null,
+      updatePrompt: tail.some(line => typeof line === 'string' && /Update available/i.test(line)),
+    };
+  }
+  // A bare CR submits the composer draft; the prompt text itself is never sent again.
+  submitDraft(handle) {
+    if (!validId(handle)) throw new Error('缺少有效終端 handle');
+    return this.call(['terminal', 'send', '--terminal', handle, '--text', '\r']);
+  }
   start(runId, settings, spec, options, requestId) {
     const args = startArgs(runId, settings, options, requestId);
     try { return this.call(args, spec); }

@@ -14,10 +14,13 @@ test('relay CLI exposes usage and rejects missing explicit run/session or extra 
   const help = invoke(['help']);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /edict relay --run/);
+  assert.match(help.stdout, /edict stalls --run/);
   for (const args of [
     ['relay', '--session', 'codex:test', '--once'],
     ['relay', '--run', 'run-test', '--once'],
     ['relay', 'extra', '--run', 'run-test', '--session', 'codex:test'],
+    ['stalls', '--session', 'codex:test', '--unstick'],
+    ['stalls', 'extra', '--run', 'run-test', '--session', 'codex:test'],
   ]) {
     const result = invoke(args);
     assert.equal(result.status, 1);

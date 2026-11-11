@@ -31,6 +31,8 @@ function fixture(t) {
       return { dispatchId, taskId, runId };
     },
     workers() { return this.rows; },
+    stallEvidence() { return { handle: 'term_test', state: 'ready', stage: 'running', liveness: 'live', terminalStatus: 'running', draft: null, updatePrompt: false }; },
+    submitDraft() { assert.fail('unexpected draft submission'); },
     rename(runId, dispatchId, title) { return { state: 'applied', handle: `term_${dispatchId}`, title }; },
     stop(dispatchId) { this.rows.find(x => x.dispatchId === dispatchId).state = 'stopped'; return { dispatchId, state: 'stopped' }; },
     send(runId, dispatchId, body, requestId) { this.calls.push({ dispatchId, body, requestId }); return { messageId: 'message-test' }; },
@@ -193,6 +195,96 @@ test('relay polling logs failed attempts on subsequent rounds without another na
   assert.equal(sends, 1);
   assert.equal(output[1].skipped, true);
   assert.equal(output[1].state, 'unknown');
+});
+
+test('relay settles natively ended executors each round so their capacity is freed without manual sync', async t => {
+  const f = fixture(t), started = f.launch(), output = [];
+  f.root();
+  assert.equal(f.w.run('run-test').operations[started.operation.id].state, 'accepted');
+  f.runtime.rows.find(x => x.dispatchId === started.member.dispatchId).state = 'succeeded';
+  assert.equal(await runRelay(f.w, 'run-test', { once: true, output: row => output.push(row) }), 0);
+  const settle = output.find(x => x.type === 'settle');
+  assert.ok(settle.settled.some(x => x.operationId === started.operation.id && x.previousState === 'accepted' && x.nativeState === 'succeeded'));
+  assert.equal(f.w.run('run-test').operations[started.operation.id].state, 'settled');
+  output.length = 0;
+  assert.equal(await runRelay(f.w, 'run-test', { once: true, output: row => output.push(row) }), 0);
+  assert.equal(output.filter(x => x.type === 'settle').length, 0);
+});
+
+test('relay logs a round that fails before any forward and delivers on the next round', async t => {
+  const f = relayFixture(t), signal = new AbortController(), output = [];
+  const unavailable = () => Object.assign(new Error('spawnSync orca ENOENT'), { code: 'ENOENT' });
+  const { relay, settle } = f.w;
+  let relayFailures = 1, settleFailures = 1;
+  f.w.relay = function (...args) { if (relayFailures-- > 0) throw unavailable(); return relay.apply(this, args); };
+  f.w.settle = function (...args) { if (settleFailures-- > 0) throw unavailable(); return settle.apply(this, args); };
+  let sends = 0;
+  f.runtime.send = () => { sends++; return { messageId: 'after-restart' }; };
+  const result = await runRelay(f.w, 'run-test', { interval: 0.001, signal: signal.signal, output: row => {
+    output.push(row);
+    if (row.state === 'delivered') signal.abort();
+  } });
+  assert.deepEqual(output.filter(x => x.type === 'round-error').map(x => [x.phase, x.code]), [['settle', 'ENOENT'], ['relay', 'ENOENT']]);
+  assert.equal(output.at(-1).state, 'delivered');
+  assert.equal(sends, 1);
+  assert.equal(result, 1);
+});
+
+test('relay still stops when a round fails after a forward was attempted', async t => {
+  const f = relayFixture(t);
+  let forwards = 0;
+  f.w.forward = () => { forwards++; throw new Error('admission refused'); };
+  f.w.mutate = () => { throw Object.assign(new Error('spawnSync orca ENOENT'), { code: 'ENOENT' }); };
+  await assert.rejects(runRelay(f.w, 'run-test', { interval: 0.001, output: () => {} }), /ENOENT/);
+  assert.equal(forwards, 1);
+});
+
+test('stalls reports held drafts and update prompts and sends one CR only for a live draft when unstick is given', t => {
+  const f = fixture(t), started = f.launch();
+  f.root();
+  const sent = [];
+  f.runtime.submitDraft = handle => { sent.push(handle); return { ok: true }; };
+  const evidence = { handle: 'term_held', state: 'start_unknown', stage: 'turn_start_unobserved', liveness: 'live', terminalStatus: 'running', draft: 'Held dispatch prompt', updatePrompt: false };
+  f.runtime.stallEvidence = (runId, dispatchId) => dispatchId === started.member.dispatchId ? evidence : { ...evidence, handle: 'term_idle', draft: null };
+  const target = rows => rows.find(x => x.dispatchId === started.member.dispatchId);
+  let row = target(f.w.stalls('run-test'));
+  assert.deepEqual(row.findings, ['draft']);
+  assert.equal(row.unstick, null);
+  assert.deepEqual(sent, []);
+  row = target(f.w.stalls('run-test', { unstick: true }));
+  assert.deepEqual(row.unstick, { sent: true });
+  assert.deepEqual(sent, ['term_held']);
+  evidence.updatePrompt = true;
+  row = target(f.w.stalls('run-test', { unstick: true }));
+  assert.deepEqual(row.findings, ['draft', 'update-prompt']);
+  assert.equal(row.unstick.sent, false);
+  evidence.updatePrompt = false; evidence.liveness = 'unverifiable';
+  assert.equal(target(f.w.stalls('run-test', { unstick: true })).unstick.sent, false);
+  assert.deepEqual(sent, ['term_held']);
+  f.as(f.bingbu);
+  assert.throws(() => f.w.stalls('run-test'), /owner/);
+});
+
+test('relay logs stall findings to its JSONL and reports each stall query error once', async t => {
+  const f = fixture(t), started = f.launch(), log = path.join(f.dir, 'stalls.jsonl'), output = [], signal = new AbortController();
+  f.root();
+  f.runtime.stallEvidence = (runId, dispatchId) => {
+    if (dispatchId === started.member.dispatchId) return { handle: 'term_update', state: 'start_unknown', stage: 'turn_start_unobserved', liveness: 'live', terminalStatus: 'running', draft: null, updatePrompt: true };
+    throw new Error('terminal unreadable');
+  };
+  let rounds = 0;
+  const settle = f.w.settle;
+  f.w.settle = function (...args) { if (++rounds === 3) signal.abort(); return settle.apply(this, args); };
+  await runRelay(f.w, 'run-test', { interval: 0.001, log, signal: signal.signal, output: row => output.push(row) });
+  const logged = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(logged, output);
+  const findings = logged.filter(x => x.type === 'stall' && x.dispatchId === started.member.dispatchId);
+  assert.equal(findings.length, 2);
+  assert.deepEqual(findings[0].findings, ['update-prompt']);
+  assert.equal(findings[0].unstick, null);
+  const errors = logged.filter(x => x.type === 'stall' && x.error);
+  assert.ok(errors.length > 0);
+  assert.equal(new Set(errors.map(x => x.dispatchId)).size, errors.length);
 });
 
 test('workflow reports recoverable corrupt main without changing either file', t => {

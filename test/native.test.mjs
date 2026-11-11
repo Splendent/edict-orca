@@ -173,6 +173,36 @@ test('request preserves pending accepted checkpoints and completed receipts for 
   assert.equal(native.request('request-example'), completed);
 });
 
+test('stallEvidence reads the verified assignee terminal and reports a held draft and the update prompt', () => {
+  const detail = { dispatch: dispatch({ assigneeHandle: 'term_worker' }),
+    worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker', state: 'start_unknown', stage: 'turn_start_unobserved' },
+    projection: { liveness: { verdict: 'live' } } };
+  const read = { terminal: { handle: 'term_worker', status: 'running', tail: ['Update available! 0.1 -> 0.2'], draft: 'Held prompt' } };
+  const { native, calls } = runtime(detail, read);
+  assert.deepEqual(native.stallEvidence(runId, 'ctx-example'), { handle: 'term_worker', state: 'start_unknown', stage: 'turn_start_unobserved',
+    liveness: 'live', terminalStatus: 'running', draft: 'Held prompt', updatePrompt: true });
+  assert.deepEqual(calls[1].args, ['terminal', 'read', '--terminal', 'term_worker', '--limit', '40']);
+  const quiet = runtime(detail, { terminal: { handle: 'term_worker', status: 'running', tail: ['working'] } }).native.stallEvidence(runId, 'ctx-example');
+  assert.equal(quiet.draft, null); assert.equal(quiet.updatePrompt, false);
+});
+
+test('stallEvidence never reads a terminal whose Dispatch, Run or handle is unverified', () => {
+  const detail = { dispatch: dispatch({ assigneeHandle: 'term_worker' }), worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker' } };
+  for (const bad of [{ ...detail, dispatch: { ...detail.dispatch, runId: 'other' } }, { ...detail, worker: { ...detail.worker, agentTerminalHandle: 'term_other' } }]) {
+    const { native, calls } = runtime(bad);
+    assert.throws(() => native.stallEvidence(runId, 'ctx-example'), /身分未確認/);
+    assert.equal(calls.length, 1);
+  }
+  assert.throws(() => runtime(detail, { terminal: { handle: 'term_other', tail: [] } }).native.stallEvidence(runId, 'ctx-example'), /handle/);
+});
+
+test('submitDraft sends only a bare carriage return to the terminal', () => {
+  const { native, calls } = runtime({ ok: true });
+  native.submitDraft('term_worker');
+  assert.deepEqual(calls[0].args, ['terminal', 'send', '--terminal', 'term_worker', '--text', '\r']);
+  assert.throws(() => native.submitDraft(''), /handle/);
+});
+
 function renameFixture() {
   return { detail: { dispatch: dispatch({ assigneeHandle: 'term_worker', assigneePaneKey: 'tab-worker:leaf-worker' }),
     worker: { dispatchId: 'ctx-example', agentTerminalHandle: 'term_worker' } },
