@@ -5,7 +5,8 @@ const message = error => String(error?.message ?? error);
 const UNREACHABLE_CODES = ['ENOENT', 'EACCES', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'];
 // Only failures to reach or call Orca are retried on the next round; workflow refusals (for example lost ownership)
 // and programming errors end the relay.
-const orcaUnavailable = error => error?.nativeFailure === true || UNREACHABLE_CODES.includes(error?.code);
+// Lock contention with another Edict command is transient, so the round is retried like an Orca outage.
+const orcaUnavailable = error => error?.nativeFailure === true || UNREACHABLE_CODES.includes(error?.code) || error?.code === 'EDICT_LOCK_BUSY';
 
 // Each round: settle natively ended operations, forward owner-required messages, then check in-flight Dispatches for
 // stalls. A round in which Orca cannot be reached (for example spawnSync orca ENOENT after an Orca restart) is logged

@@ -204,7 +204,7 @@ function transaction(fn) {
     catch (error) {
       if (error.code !== 'EEXIST') throw error;
       if (recoverLock(lock)) continue;
-      if (Date.now() >= deadline) fail(`工作資料鎖仍被使用或無法確認；沒有派工。請核對 ${lock} 及 ${lock}.recovery；不依鎖齡移除回收鎖`);
+      if (Date.now() >= deadline) throw Object.assign(new Error(`工作資料鎖仍被使用或無法確認；沒有派工。請核對 ${lock} 及 ${lock}.recovery；不依鎖齡移除回收鎖`), { code: 'EDICT_LOCK_BUSY' });
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
