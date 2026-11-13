@@ -10,6 +10,7 @@ import { activate, deactivate } from '../src/session.mjs';
 import { defaults } from '../src/config.mjs';
 import { spawnFailure } from '../src/orca.mjs';
 import { runRelay } from '../src/relay.mjs';
+import { saveNativeReceipt, nativeReceipts } from '../src/workflow-receipts.mjs';
 
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-workflow-'));
@@ -207,6 +208,113 @@ test('sync skips empty stop writes and repeated full-file reads for unchanged pr
   f.w.sync('run-test');
   assert.ok(reads<=5,`full workflow reads: ${reads}`);
   assert.equal(writes,1);
+});
+
+function retainNativeReceipts(t) {
+  const unlink=fs.unlinkSync;
+  t.mock.method(fs,'unlinkSync',file=>{
+    if(String(file).includes('workflow-receipts'))throw Object.assign(new Error('busy'),{code:'EBUSY'});
+    return unlink(file);
+  });
+}
+
+test('EBUSY on a refused continuation receipt cannot restore a stale result after a later commit',t=>{
+  const f=fixture(t),started=f.launch(),file=path.join(f.project,'src/result.txt');
+  fs.writeFileSync(file,'v1');f.as(started.member);
+  const v1=f.w.result('run-test',started.operation.id,{files:[file]}).result;
+  f.runtime.rows.find(x=>x.dispatchId===started.member.dispatchId).state='succeeded';
+  f.root();f.w.sync('run-test');f.as(f.bingbu);retainNativeReceipts(t);
+  f.runtime.send=()=>{throw Object.assign(new Error('refused'),{receipt:{ok:false,error:{data:{effectsApplied:false,spawn:{processStarted:false}}}}});};
+  assert.throws(()=>f.w.message('run-test',started.member.id,'W-001','Repair',undefined,1),/refused/);
+  assert.equal(f.w.run('run-test').items['W-001'].result.digest,v1.digest);
+  const disk=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8'));
+  const retained=fs.readdirSync(path.join(process.env.EDICT_HOME,'workflow-receipts'));
+  assert.ok(retained.length);for(const id of retained)assert.equal(disk.appliedNativeReceipts[id],true);
+  fs.writeFileSync(file,'v2');f.as(started.member);
+  const v2=f.w.result('run-test',started.operation.id,{files:[file]}).result;
+  assert.notEqual(v2.digest,v1.digest);
+  for(let i=0;i<2;i++)assert.equal(new Workflow('codex:workflow',f.runtime).run('run-test').items['W-001'].result.digest,v2.digest);
+  f.root();f.add('flush-v2');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8')).runs['run-test'].items['W-001'].result.digest,v2.digest);
+});
+
+test('EBUSY on a refused forward receipt cannot reset a later delivered original message',t=>{
+  const f=relayFixture(t);retainNativeReceipts(t);
+  f.runtime.send=()=>{throw Object.assign(new Error('refused'),{receipt:{ok:false,error:{data:{effectsApplied:false,spawn:{processStarted:false}}}}});};
+  assert.throws(()=>f.w.forward('run-test',f.first.messageId),/refused/);
+  f.runtime.send=()=>({messageId:'second-forward'});
+  assert.equal(f.w.forward('run-test',f.first.messageId).confirmed,true);
+  f.add('flush-forward');
+  const run=new Workflow('codex:workflow',f.runtime).run('run-test');
+  assert.equal(run.messages.find(x=>x.id===f.first.messageId).state,'delivered');
+  assert.equal(run.operations[f.first.messageId].state,'forwarded');
+});
+
+test('EBUSY on a phase-one replacement receipt cannot clear a newer result',t=>{
+  const f=fixture(t),started=f.launch();
+  f.runtime.rows.find(x=>x.dispatchId===started.member.dispatchId).state='succeeded';
+  f.root();f.w.sync('run-test');f.as(f.bingbu);retainNativeReceipts(t);
+  const replacement=f.w.replace('run-test',started.member.id,{spec:'Continue implementation',generation:1});
+  const file=path.join(f.project,'src/result.txt');fs.writeFileSync(file,'replacement-result');f.as(replacement.member);
+  const result=f.w.result('run-test',replacement.operation.id,{files:[file]}).result;
+  f.root();f.add('flush-replacement');
+  assert.equal(new Workflow('codex:workflow',f.runtime).run('run-test').items['W-001'].result.digest,result.digest);
+  const disk=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8'));
+  assert.equal(disk.runs['run-test'].items['W-001'].result.digest,result.digest);
+});
+
+test('committed receipt markers skip file reads and are pruned after successful cleanup',t=>{
+  const f=fixture(t);retainNativeReceipts(t);f.root();
+  f.w.message('run-test',f.zhongshu.id,undefined,'Continue planning');
+  const read=fs.readFileSync;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{
+    if(String(file).includes('workflow-receipts'))assert.fail('already applied sidecar must not be parsed again');
+    return read(file,...args);
+  });
+  assert.doesNotThrow(()=>f.w.run('run-test'));
+  t.mock.restoreAll();f.add('cleanup-receipts');f.add('prune-markers');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8')).appliedNativeReceipts,{});
+});
+
+test('malformed native sidecars are quarantined without blocking valid receipts or workflow reads',t=>{
+  const f=fixture(t),bad=saveNativeReceipt({kind:'message',session:'codex:workflow'},{status:'error'});
+  const broken=saveNativeReceipt({kind:'message',session:'codex:workflow'},{status:'pending'});
+  const invalidTime=saveNativeReceipt({kind:'message',session:'codex:workflow',at:0},{status:'returned',receipt:{messageId:'bad-time'}});
+  fs.writeFileSync(broken,'{broken');
+  const started=f.launch();
+  assert.equal(f.w.run('run-test').members[started.member.id].dispatchId,started.member.dispatchId);
+  assert.equal(fs.existsSync(bad),false);assert.equal(fs.existsSync(broken),false);assert.equal(fs.existsSync(invalidTime),false);
+  const quarantined=fs.readdirSync(path.join(process.env.EDICT_HOME,'workflow-receipts','quarantine'));
+  assert.equal(quarantined.length,3);
+  assert.ok(quarantined.every(name=>name.endsWith('.malformed')));
+});
+
+test('a blocked quarantine rename does not prevent reading the main workflow',t=>{
+  const f=fixture(t),bad=saveNativeReceipt({kind:'message',session:'codex:workflow'},{status:'error'}),rename=fs.renameSync;
+  t.mock.method(fs,'renameSync',(from,to)=>{if(from===bad)throw Object.assign(new Error('busy'),{code:'EBUSY'});return rename(from,to);});
+  assert.doesNotThrow(()=>f.w.run('run-test'));assert.equal(fs.existsSync(bad),true);
+});
+
+test('only pending witnesses from proven dead local processes are quarantined as unconfirmed',t=>{
+  fixture(t);
+  const context={kind:'start',session:'codex:workflow'},kill=process.kill;
+  const dead=saveNativeReceipt({...context,owner:{pid:999999,host:os.hostname()}},{status:'pending'});
+  const live=saveNativeReceipt(context,{status:'pending'});
+  const remote=saveNativeReceipt({...context,owner:{pid:999999,host:'other-host'}},{status:'pending'});
+  const legacy=saveNativeReceipt({...context,owner:undefined},{status:'pending'});
+  const inaccessible=saveNativeReceipt({...context,owner:{pid:999998,host:os.hostname()}},{status:'pending'});
+  t.mock.method(process,'kill',(pid,...args)=>{
+    if(pid===999999)throw Object.assign(new Error('dead'),{code:'ESRCH'});
+    if(pid===999998)throw Object.assign(new Error('unverifiable'),{code:'EPERM'});
+    return kill(pid,...args);
+  });
+  assert.deepEqual(nativeReceipts(),[]);
+  assert.equal(fs.existsSync(dead),false);
+  for(const file of [live,remote,legacy,inaccessible])assert.equal(fs.existsSync(file),true);
+  const quarantine=path.join(process.env.EDICT_HOME,'workflow-receipts','quarantine');
+  const names=fs.readdirSync(quarantine);assert.equal(names.length,1);
+  assert.ok(names[0].endsWith('.pending-unconfirmed'));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(quarantine,names[0]),'utf8')).status,'pending');
 });
 
 for(const receipt of [null,undefined,'invalid-receipt']) {

@@ -175,7 +175,14 @@ function readDb() {
     const db = before === null ? { version: 2, sequence: 0, runs: {}, intents: {} } : readJSON(file);
     if (db.version !== 2) fail('工作資料格式不支援；未轉換或覆寫');
     const applied = [];
-    for (const { file, event } of nativeReceipts()) if (applyNativeReceipt(db, event)) applied.push(file);
+    db.appliedNativeReceipts ??= {};
+    for (const { file, id, event } of nativeReceipts(db.appliedNativeReceipts)) {
+      if (Object.hasOwn(db.appliedNativeReceipts, id) || applyNativeReceipt(db, event)) {
+        // Commit the marker and its effects together; unlink is only garbage collection.
+        db.appliedNativeReceipts[id] = true;
+        applied.push(file);
+      }
+    }
     // A concurrent commit may acknowledge a receipt after this reader loaded the old main file.
     if (before !== version()) continue;
     Object.defineProperty(db, appliedReceipts, { value: applied });
