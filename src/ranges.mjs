@@ -40,24 +40,29 @@ export function geometry(root,names) {
   if (!names.length) return {ranges:[],unknown:false};
   if (!root || !fs.existsSync(root)) return {ranges:[],unknown:true};
   const result={ranges:[],unknown:false},visited=new Set();
-  let budget=2048;
-  function visit(file) {
-    if (--budget<0) { result.unknown=true;return; }
-    const entry=descriptor(file);
-    if (!entry) { result.unknown=true;return; }
-    result.ranges.push(entry.routes);
-    if (!entry.exists||!entry.stat.isDirectory()||visited.has(identity(entry.stat))) return;
-    visited.add(identity(entry.stat));
+  function descendants(directory,stat) {
+    const id=identity(stat);
+    if(visited.has(id)) return;
+    visited.add(id);
     try {
-      for(const child of fs.readdirSync(entry.real)) {
-        visit(path.join(entry.real,child));
-        if (budget<0) break;
+      for(const name of fs.readdirSync(directory)) {
+        const file=path.join(directory,name),child=fs.lstatSync(file,{bigint:true});
+        if(child.isSymbolicLink()) { visit(file);continue; }
+        // The selected directory's routes already cover ordinary descendants and future names.
+        // Keep each descendant's identity for hard links and aliases reached through another parent.
+        result.ranges.push([{id:identity(child),tail:[]}]);
+        if(child.isDirectory()) descendants(file,child);
       }
     } catch { result.unknown=true; }
   }
+  function visit(file) {
+    const entry=descriptor(file);
+    if (!entry) { result.unknown=true;return; }
+    result.ranges.push(entry.routes);
+    if(entry.exists&&entry.stat.isDirectory()) descendants(entry.real,entry.stat);
+  }
   for(const name of names) {
-    if(name==='*') result.unknown=true;
-    else visit(path.resolve(root,name));
+    visit(name==='*'?root:path.resolve(root,name));
   }
   return result;
 }
@@ -86,7 +91,7 @@ export function overlapDetails(candidate,other,label='在途') {
   const check=(a,b,text)=>{
     if (!rangeOverlap(a,b)) return;
     rows.push(text);
-    // rangeOverlap answers true without comparing paths whenever either side is unknown ('*' or an unresolved worktree).
+    // Unresolved locations or unreadable trees cannot safely exclude an overlap.
     if (a?.unknown||b?.unknown) conservative=true;
   };
   check(candidate.physicalWrites,other.physicalWrites,`寫入/寫入：本次寫入 ${show(candidate.writes)}，${label}寫入 ${show(other.writes)}`);
@@ -98,5 +103,5 @@ export function overlapDetails(candidate,other,label='在途') {
   // A read of a whole directory blocks every write inside it, e.g. sibling output files in one shared folder.
   const hints=[...(writeRead?coveringReads(other.reads,candidate.writes):[]),...(readWrite?coveringReads(candidate.reads,other.writes):[])];
   if (hints.length) rows.push(`讀取目錄 ${[...new Set(hints)].join(', ')} 涵蓋另一方在該目錄內的寫入；若不需讀取那些輸出，雙方改列出實際要讀的檔案，不讀整個輸出目錄`);
-  return conservative?[...rows,'實體範圍未確認（* 或工作樹位置未知），保守視為重疊']:rows;
+  return conservative?[...rows,'實體範圍未確認（工作樹位置未知或目錄無法完整讀取），保守視為重疊']:rows;
 }
