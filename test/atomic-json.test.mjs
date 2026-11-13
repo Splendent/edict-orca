@@ -13,6 +13,24 @@ function fixture(t) {
   return { dir, file };
 }
 
+test('atomic backup reuses a validated read of the same file version',t=>{
+  const {file}=fixture(t),parse=JSON.parse;let parses=0;
+  t.mock.method(JSON,'parse',(...args)=>{parses++;return parse(...args);});
+  const value=readJSON(file);value.updated=true;
+  atomicJSON(file,value,{keepPrevious:true});
+  assert.equal(parses,1);
+  assert.deepEqual(readJSON(file+'.prev'),{original:true});
+  assert.deepEqual(readJSON(file),{original:true,updated:true});
+});
+
+test('validated backup never trusts a file changed since the read',t=>{
+  const {file}=fixture(t),value=readJSON(file),original=fs.readFileSync(file,'utf8');
+  fs.writeFileSync(file,'x'.repeat(original.length));
+  assert.throws(()=>atomicJSON(file,value,{keepPrevious:true}),SyntaxError);
+  assert.equal(fs.readFileSync(file,'utf8'),'x'.repeat(original.length));
+  assert.equal(fs.existsSync(file+'.prev'),false);
+});
+
 for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
   test(`atomic JSON retries temporary ${code} and writes compact readable JSON`, t => {
     const { dir, file } = fixture(t), rename = fs.renameSync;
