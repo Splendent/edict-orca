@@ -116,18 +116,23 @@ export class NativeRuntime {
       cursor = page.nextCursor;
     }
     for (const row of workers) {
-      if (!['failed', 'abandoned'].includes(row.state) || row.projection?.stage?.detail !== 'settled' ||
-          row.projection?.liveness?.verdict === 'live') continue;
+      const stage = row.projection?.stage?.detail;
+      if (!['failed', 'abandoned'].includes(row.state) || !['settled', 'terminal_missing'].includes(stage) ||
+          row.projection?.liveness?.verdict === 'live' || row.projection?.liveness?.verdict === 'exited' ||
+          row.terminalState === 'released' || row.resource?.releaseState === 'released' ||
+          row.resource?.ownershipState === 'released' || !validId(row.taskId)) continue;
       // worker-list omits observations; only a matching worker-show can prove a retained terminal is missing.
       try {
         const data = this.call(['orchestration', 'worker-show', '--dispatch', row.dispatchId]);
         const d = data?.dispatch, w = data?.worker;
-        if (d?.id === row.dispatchId && d.runId === runId && d.taskId === row.taskId &&
+        if (d?.id === row.dispatchId && d.runId === runId && validId(d.taskId) && d.taskId === row.taskId &&
+            d.hostScope?.kind === 'local' &&
             validId(d.assigneeHandle) && d.assigneeHandle === row.agentTerminalHandle &&
             w?.dispatchId === row.dispatchId && w.agentTerminalHandle === d.assigneeHandle &&
-            w.state === row.state && w.stage === 'settled' && data.terminal === null &&
+            w.state === row.state && w.stage === stage && data.terminal === null &&
             data.projection?.liveness?.verdict !== 'live' && data.observation?.status === 'missing') {
           row.observation = data.observation;
+          row.hostScope = d.hostScope;
         }
       } catch { /* Keep execution unconfirmed when the native observation cannot be read. */ }
     }

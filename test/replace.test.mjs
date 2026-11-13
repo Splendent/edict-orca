@@ -58,7 +58,7 @@ function fixture(t) {
 
 const settle = (f, dispatchId, state = 'succeeded') => { f.runtime.rows.find(x => x.dispatchId === dispatchId).state = state; f.root(); f.w.sync('run-test'); };
 
-for (const [name, state, stage, verdict, observation, expected] of [
+for (const [name, state, stage, verdict, observation, expected, options = {}] of [
   ['abandoned missing terminal', 'abandoned', 'terminal_missing', 'unverifiable', 'missing', true],
   ['failed retained but gone terminal', 'failed', 'settled', 'unverifiable', 'missing', true],
   ['failed unconfirmed terminal', 'failed', 'settled', 'unverifiable', 'unknown', false],
@@ -67,6 +67,33 @@ for (const [name, state, stage, verdict, observation, expected] of [
   ['running live terminal', 'running', 'terminal_missing', 'live', 'missing', false],
   ['running unverifiable terminal', 'running', 'terminal_missing', 'unverifiable', 'missing', false],
   ['accepted unverifiable terminal', 'accepted', 'settled', 'unverifiable', 'missing', false],
+  ...['completed', 'succeeded', 'stopped'].map(state =>
+    [`${state} with live retained terminal`, state, 'settled', 'live', 'live', true, { probes: 0 }]),
+  ...['settled', 'terminal_missing'].flatMap(stage => [
+    [`${stage} remote terminal`, 'failed', stage, 'unverifiable', 'missing', false, { hostScope: { kind: 'ssh' } }],
+    [`${stage} unknown host`, 'failed', stage, 'unverifiable', 'missing', false, { hostScope: null }],
+    [`${stage} worker-show throws`, 'failed', stage, 'unverifiable', 'missing', false, { throws: true }],
+    [`${stage} terminal still present`, 'failed', stage, 'unverifiable', 'missing', false, { terminal: { handle: 'term-worker' } }],
+  ]),
+  ...['id', 'runId', 'taskId', 'assigneeHandle'].map(field =>
+    [`mismatched dispatch ${field}`, 'failed', 'settled', 'unverifiable', 'missing', false,
+      { alter: detail => { detail.dispatch[field] = 'other'; } }]),
+  ...['dispatchId', 'agentTerminalHandle', 'state', 'stage'].map(field =>
+    [`mismatched worker ${field}`, 'failed', 'settled', 'unverifiable', 'missing', false,
+      { alter: detail => { detail.worker[field] = 'other'; } }]),
+  ['worker-show reports live', 'failed', 'settled', 'unverifiable', 'missing', false,
+    { alter: detail => { detail.projection.liveness.verdict = 'live'; } }],
+  ['missing task IDs on both records', 'failed', 'settled', 'unverifiable', 'missing', false,
+    { row: { taskId: undefined }, probes: 0 }],
+  ['missing worker-show task ID', 'failed', 'settled', 'unverifiable', 'missing', false,
+    { alter: detail => { delete detail.dispatch.taskId; } }],
+  ['released terminal skips worker-show', 'failed', 'settled', 'unverifiable', 'missing', true,
+    { row: { terminalState: 'released' }, probes: 0 }],
+  ['released resource skips worker-show', 'failed', 'settled', 'unverifiable', 'missing', true,
+    { row: { resource: { releaseState: 'released' } }, probes: 0 }],
+  ['released ownership skips worker-show', 'failed', 'settled', 'unverifiable', 'missing', true,
+    { row: { resource: { ownershipState: 'released' } }, probes: 0 }],
+  ['exited terminal skips worker-show', 'failed', 'settled', 'exited', 'missing', true, { probes: 0 }],
 ]) {
   test(`sync and replacement respect native execution evidence: ${name}`, t => {
     const f = fixture(t), started = f.launch();
@@ -74,7 +101,7 @@ for (const [name, state, stage, verdict, observation, expected] of [
     Object.assign(row, { taskId: started.operation.taskId, runId: 'run-test', workerState: state,
       state, dispatchStatus: 'failed', agentTerminalHandle: 'term-worker', terminalState: 'retained',
       resource: { ownershipState: 'external', releaseState: 'not_requested' },
-      projection: { stage: { worker: state, detail: stage }, liveness: { verdict } } });
+      projection: { host: { kind: 'local' }, stage: { worker: state, detail: stage }, liveness: { verdict } }, ...options.row });
     // Exercise the real adapter: worker-list has no observation field, worker-show does.
     const native = new NativeRuntime(), calls = [];
     native.call = args => {
@@ -83,17 +110,24 @@ for (const [name, state, stage, verdict, observation, expected] of [
         page: { hasMore: false, nextCursor: null } };
       assert.equal(args[1], 'worker-show');
       assert.equal(args[3], row.dispatchId);
-      return { dispatch: { id: row.dispatchId, runId: row.runId, taskId: row.taskId, assigneeHandle: row.agentTerminalHandle },
+      if (options.throws) throw new Error('worker-show unavailable');
+      const detail = { dispatch: { id: row.dispatchId, runId: row.runId, taskId: row.taskId,
+        assigneeHandle: row.agentTerminalHandle, hostScope: Object.hasOwn(options, 'hostScope') ? options.hostScope : { kind: 'local' } },
         worker: { dispatchId: row.dispatchId, state, stage, agentTerminalHandle: row.agentTerminalHandle },
-        projection: row.projection, terminal: null, observation: { status: observation, exactWorker: false } };
+        projection: structuredClone(row.projection), terminal: options.terminal ?? null,
+        observation: { status: observation, exactWorker: false } };
+      options.alter?.(detail);
+      return detail;
     };
     f.runtime.workers = native.workers.bind(native);
     f.root(); f.w.sync('run-test');
     const op = f.w.run('run-test').operations[started.operation.id];
     assert.equal(op.state, expected ? 'settled' : 'accepted');
-    assert.equal(op.native.terminalState, 'retained');
-    if (state === 'failed' && stage === 'settled' && verdict !== 'live') {
-      assert.ok(calls.some(args => args[1] === 'worker-show'));
+    assert.equal(op.native.terminalState, row.terminalState);
+    const probes = calls.filter(args => args[1] === 'worker-show').length;
+    if (options.probes !== undefined) assert.equal(probes, options.probes);
+    else if (['failed', 'abandoned'].includes(state) && verdict !== 'live') {
+      assert.equal(probes, 1);
     }
     f.as(f.bingbu);
     if (expected) {
