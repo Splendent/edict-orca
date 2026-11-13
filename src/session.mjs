@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { validateConfig } from './config.mjs';
 import { TAIZI_DUTY } from './roles.mjs';
 const validId=value=>typeof value==='string'&&value.trim().length>0;
+const validatedReads = new WeakMap();
+const fileIdentity = file => {
+  const stat = fs.statSync(file, { bigint: true });
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+};
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export function home(env = process.env) { return env.EDICT_HOME || path.join(os.homedir(), '.config', 'edict'); }
@@ -51,7 +56,10 @@ export function atomicJSON(file, value, { keepPrevious = false } = {}) {
   try {
     if (keepPrevious && fs.existsSync(file)) {
       // Validate before linking: damaged state must never replace a good backup.
-      JSON.parse(fs.readFileSync(file, 'utf8'));
+      const validated = value && typeof value === 'object' ? validatedReads.get(value) : null;
+      if (!validated || validated.file !== path.resolve(file) || validated.identity !== fileIdentity(file)) {
+        JSON.parse(fs.readFileSync(file, 'utf8'));
+      }
       previous = `${file}.${randomUUID()}.prev.tmp`;
       fs.linkSync(file, previous);
     }
@@ -86,8 +94,12 @@ function renameWithRetry(temp, file) {
   }
 }
 export function readJSON(file) {
+  const before = fileIdentity(file);
   const content = fs.readFileSync(file, 'utf8');
-  try { return JSON.parse(content); }
+  let value;
+  try {
+    value = JSON.parse(content);
+  }
   catch (error) {
     let recoverable = false;
     try { JSON.parse(fs.readFileSync(file + '.prev', 'utf8')); recoverable = true; } catch { /* No usable backup. */ }
@@ -95,6 +107,12 @@ export function readJSON(file) {
       ? `可用的前一份狀態位於 ${file}.prev，請確認後手動還原；未覆寫主檔，也未改用 prev`
       : '沒有可解析的 prev 備份；未覆寫主檔'), { cause: error });
   }
+  if (value && typeof value === 'object') {
+    try {
+      if (before === fileIdentity(file)) validatedReads.set(value, { file: path.resolve(file), identity: before });
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  return value;
 }
 export function sessionFile(id) {
   sessionId(id, {});

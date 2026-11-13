@@ -68,6 +68,156 @@ function relayFixture(t, { work = 'W-001', kind = 'handoff' } = {}) {
   return { ...f, first };
 }
 
+function blockWorkflowCommit(t) {
+  const file=path.join(process.env.EDICT_HOME,'workflow.lock'),now=Date.now;let ticks=0;
+  fs.writeFileSync(file,JSON.stringify({pid:process.pid,host:os.hostname(),nonce:'live-holder'}));
+  // Advance the bounded waiter without spending 30 seconds on each injected contention case.
+  t.mock.method(Date,'now',()=>fs.existsSync(file)?++ticks*31_000:now());
+  return ()=>fs.unlinkSync(file);
+}
+
+test('a live workflow holder can release after the old one-second deadline',async t=>{
+  const f=fixture(t),lock=path.join(process.env.EDICT_HOME,'workflow.lock');
+  const holder=new Worker(`const {workerData,parentPort}=require('node:worker_threads');const fs=require('node:fs'),os=require('node:os');fs.writeFileSync(workerData,JSON.stringify({pid:process.pid,host:os.hostname(),nonce:'holder'}));parentPort.postMessage('ready');setTimeout(()=>fs.unlinkSync(workerData),1250);`,{eval:true,workerData:lock});
+  await new Promise((resolve,reject)=>{holder.once('message',resolve);holder.once('error',reject);});
+  const started=performance.now();
+  f.root();f.w.add('run-test',{id:'waited',title:'waited',requirement:'preserve holder',reads:[],writes:[],acceptance:['accepted']});
+  assert.ok(performance.now()-started>=1000);
+  assert.ok(f.w.run('run-test').items.waited);
+  await new Promise((resolve,reject)=>{holder.once('exit',code=>code===0?resolve():reject(Error('holder failed')));});
+});
+
+test('admission lock failure makes no native call and creates no new operation',t=>{
+  const f=fixture(t),before=f.runtime.calls.length,ops=Object.keys(f.w.run('run-test').operations);
+  const release=blockWorkflowCommit(t);
+  assert.throws(()=>f.launch(),{code:'EDICT_LOCK_BUSY'});
+  assert.equal(f.runtime.calls.length,before);
+  assert.deepEqual(Object.keys(f.w.run('run-test').operations),ops);
+  release();
+});
+
+test('a native start receipt survives post-effect lock failure and binds a restarted worker view',t=>{
+  const f=fixture(t),before=f.runtime.calls.length;let release,operation;
+  f.runtime.onStart=()=>{
+    const disk=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8'));
+    operation=Object.values(disk.runs['run-test'].operations).at(-1);
+    assert.equal(operation.state,'submitted');
+    const witnesses=fs.readdirSync(path.join(process.env.EDICT_HOME,'workflow-receipts')).map(name=>JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow-receipts',name),'utf8')));
+    assert.ok(witnesses.some(x=>x.status==='pending'&&x.requestId===operation.requestId));
+    release=blockWorkflowCommit(t);
+  };
+  assert.throws(()=>f.launch(),{code:'EDICT_LOCK_BUSY'});
+  const fresh=new Workflow('codex:workflow',f.runtime),member=fresh.run('run-test').members[operation.memberId];
+  assert.ok(member.dispatchId);
+  f.as(member);assert.equal(fresh.show('run-test').id,'run-test');
+  const disk=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8'));
+  assert.equal(disk.runs['run-test'].operations[operation.id].state,'submitted');
+  release();f.root();f.w.add('run-test',{id:'flush',title:'flush',requirement:'flush receipt',reads:[],writes:[],acceptance:['bound']});
+  const saved=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8')).runs['run-test'];
+  assert.equal(saved.operations[operation.id].state,'accepted');
+  assert.equal(saved.members[member.id].dispatchId,member.dispatchId);
+  assert.equal(f.runtime.calls.length,before+1);
+  assert.deepEqual(fs.readdirSync(path.join(process.env.EDICT_HOME,'workflow-receipts')),[]);
+});
+
+test('continuation acceptance remains durable if the receipt commit cannot acquire the lock',t=>{
+  const f=fixture(t);f.root();let release,sends=0;
+  f.runtime.send=()=>{sends++;release=blockWorkflowCommit(t);return {dispatchId:'journal-follow',taskId:'journal-task',runId:'run-test'};};
+  assert.throws(()=>f.w.message('run-test',f.zhongshu.id,undefined,'Continue planning'),{code:'EDICT_LOCK_BUSY'});
+  const fresh=new Workflow('codex:workflow',f.runtime),run=fresh.run('run-test'),op=Object.values(run.operations).at(-1);
+  assert.equal(op.state,'accepted');
+  assert.equal(run.members[f.zhongshu.id].dispatchId,'journal-follow');
+  assert.equal(run.messages.find(x=>x.id===op.id).state,'delivered');
+  f.as(run.members[f.zhongshu.id]);assert.equal(fresh.show('run-test').id,'run-test');
+  release();f.root();f.runtime.request=()=>({state:'absent'});f.w.recover('run-test',op.id);
+  assert.equal(sends,1);
+});
+
+test('a failed atomic main-file commit retains the native receipt for the next transaction',t=>{
+  const f=fixture(t),rename=fs.renameSync;let started=false,failCommit=true;
+  f.runtime.onStart=()=>{started=true;};
+  t.mock.method(fs,'renameSync',(from,to)=>{
+    if(started&&failCommit&&String(to)===path.join(process.env.EDICT_HOME,'workflow.json'))throw Object.assign(new Error('injected commit failure'),{code:'EIO'});
+    return rename(from,to);
+  });
+  assert.throws(()=>f.launch(),{code:'EIO'});
+  const op=Object.values(new Workflow('codex:workflow',f.runtime).run('run-test').operations).at(-1);
+  assert.equal(op.state,'accepted');assert.ok(op.dispatchId);
+  failCommit=false;f.root();f.w.add('run-test',{id:'after-write-failure',title:'flush',requirement:'retain receipt',reads:[],writes:[],acceptance:['bound']});
+  const saved=JSON.parse(fs.readFileSync(path.join(process.env.EDICT_HOME,'workflow.json'),'utf8')).runs['run-test'];
+  assert.equal(saved.operations[op.id].dispatchId,op.dispatchId);
+});
+
+test('a reader retries if another transaction commits and acknowledges its receipt mid-read',t=>{
+  const f=fixture(t);let release;
+  f.runtime.onStart=()=>{release=blockWorkflowCommit(t);};
+  assert.throws(()=>f.launch(),{code:'EDICT_LOCK_BUSY'});release();f.root();
+  const read=fs.readFileSync;let committed=false;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{
+    const text=read(file,...args);
+    if(!committed&&String(file)===path.join(process.env.EDICT_HOME,'workflow.json')) {
+      committed=true;
+      f.w.add('run-test',{id:'concurrent-ack',title:'flush',requirement:'commit while reader holds old bytes',reads:[],writes:[],acceptance:['bound']});
+    }
+    return text;
+  });
+  const op=Object.values(new Workflow('codex:workflow',f.runtime).run('run-test').operations).findLast(x=>x.position==='executor');
+  assert.equal(op.state,'accepted');assert.ok(op.dispatchId);assert.equal(committed,true);
+});
+
+test('a reader does not reparse an unchanged snapshot when a backup hard link changes ctime',t=>{
+  const f=fixture(t),file=path.join(process.env.EDICT_HOME,'workflow.json'),read=fs.readFileSync;let reads=0;
+  t.mock.method(fs,'readFileSync',(target,...args)=>{
+    const text=read(target,...args);
+    if(String(target)===file&&++reads===1)fs.linkSync(file,path.join(f.dir,'concurrent-backup.json'));
+    return text;
+  });
+  assert.equal(f.w.run('run-test').id,'run-test');
+  assert.equal(reads,1);
+});
+
+test('forward acceptance and original-message bookkeeping survive a failed receipt commit',t=>{
+  const f=relayFixture(t);let release,sends=0;
+  f.runtime.send=()=>{sends++;release=blockWorkflowCommit(t);return {messageId:'journal-forward'};};
+  assert.throws(()=>f.w.forward('run-test',f.first.messageId),{code:'EDICT_LOCK_BUSY'});
+  const run=new Workflow('codex:workflow',f.runtime).run('run-test');
+  assert.equal(run.messages.find(x=>x.id===f.first.messageId).state,'delivered');
+  assert.equal(run.operations[f.first.messageId].state,'forwarded');
+  assert.equal(sends,1);release();
+});
+
+test('a retained raw receipt never downgrades an already normalized acceptance on replay',t=>{
+  const f=fixture(t);f.root();let release;
+  f.runtime.send=()=>{release=blockWorkflowCommit(t);return {messageId:'raw-message',to_handle:'dispatch:unused'};};
+  assert.throws(()=>f.w.message('run-test',f.zhongshu.id,undefined,'Continue planning'),{code:'EDICT_LOCK_BUSY'});
+  release();
+  f.runtime.request=()=>({state:'completed',receipt:{dispatchId:'normalized-follow',taskId:'normalized-task',runId:'run-test'}});
+  const op=Object.values(f.w.run('run-test').operations).at(-1),unlink=fs.unlinkSync;
+  t.mock.method(fs,'unlinkSync',file=>{if(String(file).includes('workflow-receipts')&&JSON.parse(fs.readFileSync(file,'utf8')).phase!==1)throw Object.assign(new Error('busy'),{code:'EBUSY'});return unlink(file);});
+  f.w.recover('run-test',op.id);
+  assert.equal(f.w.run('run-test').operations[op.id].state,'accepted');
+  assert.equal(f.w.run('run-test').members[f.zhongshu.id].dispatchId,'normalized-follow');
+});
+
+test('sync skips empty stop writes and repeated full-file reads for unchanged presentations',t=>{
+  const f=fixture(t);f.root();f.w.sync('run-test');
+  let reads=0,writes=0;const read=fs.readFileSync,write=fs.writeSync;
+  t.mock.method(fs,'readFileSync',(file,...args)=>{if(String(file)===path.join(process.env.EDICT_HOME,'workflow.json'))reads++;return read(file,...args);});
+  t.mock.method(fs,'writeSync',(...args)=>{writes++;return write(...args);});
+  f.w.sync('run-test');
+  assert.ok(reads<=5,`full workflow reads: ${reads}`);
+  assert.equal(writes,1);
+});
+
+for(const receipt of [null,undefined,'invalid-receipt']) {
+  test(`an incomplete journaled native response remains unknown without blocking later reads: ${String(receipt)}`,t=>{
+    const f=fixture(t);f.runtime.start=()=>receipt;
+    assert.equal(f.launch().confirmed,false);
+    assert.equal(Object.values(f.w.run('run-test').operations).at(-1).state,'unknown');
+    assert.doesNotThrow(()=>new Workflow('codex:workflow',f.runtime).run('run-test'));
+  });
+}
+
 test('relay forwards owner-required verbatim once and converges existing operation states outside the lock', t => {
   const f = relayFixture(t);
   let sends = 0;

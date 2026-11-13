@@ -8,6 +8,7 @@ import { resolveSettings } from './config.mjs';
 import { geometry, mergeGeometry, overlapDetails } from './ranges.mjs';
 import { NativeRuntime, sendArgs, startArgs, preflightNative, nativeArgs } from './native.mjs';
 import { windowsCommandLength } from './orca.mjs';
+import { nativeWithReceipt, saveNativeReceipt, nativeReceipts, acknowledgeNativeReceipts } from './workflow-receipts.mjs';
 
 const departments = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
 const hash = value => createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
@@ -161,11 +162,105 @@ function resourceList(values, label) {
   }))];
 }
 
+const appliedReceipts = Symbol('applied-native-receipts');
 function readDb() {
   const file = path.join(home(), 'workflow.json');
-  const db = fs.existsSync(file) ? readJSON(file) : { version: 2, sequence: 0, runs: {}, intents: {} };
-  if (db.version !== 2) fail('工作資料格式不支援；未轉換或覆寫');
-  return db;
+  const version = () => {
+    // Backup hard links change ctime without changing this snapshot's contents.
+    try { const s = fs.statSync(file, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}`; }
+    catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  };
+  for (;;) {
+    const before = version();
+    const db = before === null ? { version: 2, sequence: 0, runs: {}, intents: {} } : readJSON(file);
+    if (db.version !== 2) fail('工作資料格式不支援；未轉換或覆寫');
+    const applied = [];
+    for (const { file, event } of nativeReceipts()) if (applyNativeReceipt(db, event)) applied.push(file);
+    // A concurrent commit may acknowledge a receipt after this reader loaded the old main file.
+    if (before !== version()) continue;
+    Object.defineProperty(db, appliedReceipts, { value: applied });
+    return db;
+  }
+}
+
+function newRun(id, session, project) {
+  return { version: 2, id, session, project, enabled: true, paused: false, cancelled: false, controlRevision: 0,
+    members: { root: { id: 'root', role: 'taizi', position: 'coordinator', dispatches: [], scopes: ['*'] } },
+    items: {}, operations: {}, decisions: [], messages: [], history: [] };
+}
+// Reconciliation is local and idempotent: it never calls Orca or resends an intent.
+function applyNativeReceipt(db, event) {
+  if (event.kind === 'open') {
+    const intent = db.intents[event.requestId];
+    if (!intent || intent.session !== event.session) return false;
+    if (event.status === 'error') {
+      if (intent.state !== 'accepted') { intent.state = 'unknown'; intent.error = event.error.message; }
+    } else {
+      if (!validId(event.receipt) || !validId(event.project)) return false;
+      if (db.runs[event.receipt] && db.runs[event.receipt].session !== event.session) return false;
+      intent.state = 'accepted'; intent.runId = event.receipt;
+      db.runs[event.receipt] ??= newRun(event.receipt, event.session, event.project);
+    }
+    return true;
+  }
+  const run = db.runs[event.runId];
+  if (!run || run.session !== event.session) return false;
+  if (event.kind === 'takeover') {
+    if (run.handoff?.requestId !== event.requestId) return false;
+    if (event.status === 'returned') run.handoff.nativeReceipt = event.receipt;
+    else if (run.handoff.state !== 'accepted') Object.assign(run.handoff, { state: 'unknown', error: event.error.message, rawReceipt: event.error.receipt });
+    return true;
+  }
+  if (['presentation', 'draft'].includes(event.kind)) {
+    const member = run.members[event.memberId];
+    if (member?.dispatchId !== event.dispatchId) return false;
+    if ((event.kind === 'presentation' ? member.presentation?.observedAt : member.draftSubmission?.at) > event.at) return true;
+    if (event.kind === 'presentation') member.presentation = event.status === 'error'
+      ? { state: 'unconfirmed', error: event.error.message, label: event.label, dispatchId: event.dispatchId, observedAt: event.at }
+      : { ...event.receipt, label: event.label, dispatchId: event.dispatchId, observedAt: event.at };
+    else member.draftSubmission = { at: event.at, receipt: event.receipt, error: event.error?.message ?? null };
+    return true;
+  }
+  const op = run.operations[event.operationId];
+  if (!op || (event.kind === 'stop' ? op.stopAttempt?.id : op.requestId) !== event.requestId) return false;
+  if (event.kind === 'stop') {
+    op.stopAttempt.state = event.status === 'error' ? 'unconfirmed' : 'accepted';
+    if (event.status === 'error') Object.assign(op.stopAttempt, { error: event.error.message, code: event.error.code });
+    else {
+      op.stopAttempt.receipt = event.receipt;
+      if (!event.receipt || typeof event.receipt !== 'object') op.stopAttempt.state = 'unconfirmed';
+      else {
+        const state = event.receipt.worker?.state || event.receipt.state;
+        if (executionSettled({ ...event.receipt, ...event.receipt.worker, state })) { op.state = 'settled'; op.native = { ...op.native, state }; op.stopRequested = false; }
+      }
+    }
+    return true;
+  }
+  if (!['start', 'message', 'receipt'].includes(event.kind)) return false;
+  if (event.status === 'returned') {
+    if (!event.phase && event.receipt !== undefined && ['accepted', 'settled', 'message-delivered', 'forwarded'].includes(op.state) &&
+        op.receiptHistory?.some(x => x.digest === hash(event.receipt))) return true;
+    if (event.root) { op.root = event.root; op.physicalReads = event.physicalReads; op.physicalWrites = event.physicalWrites; }
+    if (event.rootError) op.rootError = event.rootError;
+    finalizeReceipt(run, op.id, event.receipt);
+  } else if (['submitted', 'unknown', 'owner-required', 'refused'].includes(op.state)) {
+    const error = event.error, record = run.messages.find(x => x.id === op.id);
+    const ownerRequired = event.kind === 'message' && !record?.forwardOf && ownerRelayRequired(error);
+    const refused = !ownerRequired && error.receipt?.ok === false && error.receipt.error?.data?.effectsApplied === false &&
+      (event.kind === 'start' || error.receipt.error.data.spawn?.processStarted === false);
+    op.state = ownerRequired ? 'owner-required' : refused ? 'refused' : 'unknown';
+    op.error = error.message; op.rawReceipt = error.receipt;
+    if (record) Object.assign(record, { state: op.state, error: error.message, rawReceipt: error.receipt });
+    if (refused) {
+      op.effectsApplied = false;
+      if (record) {
+        record.effectsApplied = false;
+        if (op.work && event.previousResult) run.items[op.work].result = event.previousResult;
+        if (record.forwardOf) run.messages.find(x => x.id === record.forwardOf).state = 'owner-required';
+      } else run.members[op.memberId].retired = true;
+    }
+  }
+  return true;
 }
 
 function lockSnapshot(file) {
@@ -201,22 +296,24 @@ function recoverLock(file) {
 
 function transaction(fn) {
   fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
-  const lock = path.join(home(), 'workflow.lock'), deadline = Date.now() + 1000;
+  const lock = path.join(home(), 'workflow.lock'), deadline = Date.now() + 30_000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
   let fd;
   while (fd === undefined) {
     try { fd = fs.openSync(lock, 'wx', 0o600); }
     catch (error) {
       if (error.code !== 'EEXIST') throw error;
       if (recoverLock(lock)) continue;
-      if (Date.now() >= deadline) throw Object.assign(new Error(`工作資料鎖仍被使用或無法確認；沒有派工。請核對 ${lock} 及 ${lock}.recovery；不依鎖齡移除回收鎖`), { code: 'EDICT_LOCK_BUSY' });
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      if (Date.now() >= deadline) throw Object.assign(new Error(`工作資料鎖仍被使用或無法確認；本次尚未取得寫入權。請核對 ${lock} 及 ${lock}.recovery；不依鎖齡移除回收鎖`), { code: 'EDICT_LOCK_BUSY' });
+      Atomics.wait(pause, 0, 0, 20);
     }
   }
   try {
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, host: os.hostname(), nonce: randomUUID() }));
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, host: os.hostname(), nonce: randomUUID(), acquiredAt: new Date().toISOString() }));
     const db = readDb(), result = fn(db);
     db.sequence++;
     atomicJSON(path.join(home(), 'workflow.json'), db, { keepPrevious: true });
+    acknowledgeNativeReceipts(db[appliedReceipts]);
     return result;
   } finally { fs.closeSync(fd); fs.unlinkSync(lock); }
 }
@@ -374,6 +471,14 @@ function deliveryComplete(run, item) {
 function finalizeReceipt(run, operationId, receipt) {
   const op = run.operations[operationId];
   if (!op) fail('未知操作');
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) {
+    const message = run.messages.find(x => x.id === operationId);
+    if (!['accepted', 'settled', 'message-delivered', 'forwarded'].includes(op.state)) {
+      op.state = 'unknown'; op.receipt = receipt ?? null;
+      if (message) { message.state = 'unknown'; message.receipt = receipt ?? null; }
+    }
+    return { operation: op, message, confirmed: false };
+  }
   op.receiptHistory ??= [];
   const digest = hash(receipt);
   if (!op.receiptHistory.some(x => x.digest === digest)) op.receiptHistory.push({ digest, receipt });
@@ -500,7 +605,7 @@ export class Workflow {
       return handoff.requestId;
     });
     let receipt, owner = false;
-    try { receipt = this.runtime.takeover(runId, requestId); owner = this.runtime.identity(runId).owner === true; }
+    try { receipt = nativeWithReceipt({ kind: 'takeover', session: this.session, runId, requestId }, () => this.runtime.takeover(runId, requestId)); owner = this.runtime.identity(runId).owner === true; }
     catch (error) {
       transaction(db => { const handoff = getRun(db, this.session, runId).handoff; handoff.state = 'unknown'; handoff.error = error.message; handoff.rawReceipt = error.receipt || null; });
       throw error;
@@ -531,12 +636,11 @@ export class Workflow {
     const session = requireActive(this.session), id = randomUUID();
     transaction(db => { db.intents[id] = { session: this.session, objective: text(objective, 'objective'), state: 'submitted' }; });
     let runId;
-    try { runId = this.runtime.open(objective, id); }
+    try { runId = nativeWithReceipt({ kind: 'open', session: this.session, requestId: id, project: session.project }, () => this.runtime.open(objective, id)); }
     catch (error) { transaction(db => { db.intents[id].state = 'unknown'; db.intents[id].error = error.message; }); throw error; }
     transaction(db => {
       db.intents[id].state = 'accepted'; db.intents[id].runId = runId;
-      db.runs[runId] = { version: 2, id: runId, session: this.session, project: session.project, enabled: true, paused: false, cancelled: false, controlRevision: 0,
-        members: { root: { id: 'root', role: 'taizi', position: 'coordinator', dispatches: [], scopes: ['*'] } }, items: {}, operations: {}, decisions: [], messages: [], history: [] };
+      db.runs[runId] ??= newRun(runId, this.session, session.project);
     });
     const current = readSession(this.session);
     current.runId = runId;
@@ -752,7 +856,8 @@ export class Workflow {
     const op = prepared.operation;
     const spec = workerSpec(op.role, op.spec, this.run(runId).project, { position: op.position, session: this.session, runId, memberId: op.memberId, work: op.work || undefined, phase: op.phase, stateHome: home() });
     let receipt;
-    try { receipt = this.runtime.start(runId, op.settings, spec, { worktree: op.worktree, title: memberSummary(this.run(runId), prepared.member).label }, op.requestId); }
+    try { receipt = nativeWithReceipt({ kind: 'start', session: this.session, runId, operationId: op.id, requestId: op.requestId },
+      () => this.runtime.start(runId, op.settings, spec, { worktree: op.worktree, title: memberSummary(this.run(runId), prepared.member).label }, op.requestId)); }
     catch (error) {
       transaction(db => {
         const run = getRun(db, this.session, runId), stored = run.operations[op.id];
@@ -783,12 +888,16 @@ export class Workflow {
     const current = this.run(runId).operations[operationId];
     receipt = this.resolveDeliveryTarget(current, receipt);
     let root = current?.root, rootError;
+    let shape;
     if (current?.worktree === 'new-child' && !root) {
       try { root = this.runtime.worktreeRoot(receipt); } catch (error) { rootError = error.message; }
+      if (root) shape = { root, physicalReads: mergeGeometry(geometry(root, current.reads), extraGeometry(current.extraReads || [])), physicalWrites: geometry(root, current.writes) };
     }
+    saveNativeReceipt({ kind: 'receipt', phase: 1, session: this.session, runId, operationId, requestId: current?.requestId,
+      ...shape, rootError }, { status: 'returned', receipt });
     const result = transaction(db => {
       const run = getRun(db, this.session, runId), op = run.operations[operationId];
-      if (op && root) { op.root = root; op.physicalReads = mergeGeometry(geometry(root, op.reads), extraGeometry(op.extraReads || [])); op.physicalWrites = geometry(root, op.writes); }
+      if (op && shape) Object.assign(op, shape);
       if (op && rootError) op.rootError = rootError;
       return finalizeReceipt(run, operationId, receipt);
     });
@@ -802,9 +911,10 @@ export class Workflow {
     const { label } = memberSummary(run, member);
     if (member.presentation?.state === 'applied' && member.presentation.dispatchId === member.dispatchId && member.presentation.label === label) return member.presentation;
     let result;
-    try { result = this.runtime.rename(runId, member.dispatchId, label); }
+    try { result = nativeWithReceipt({ kind: 'presentation', session: this.session, runId, memberId, dispatchId: member.dispatchId, label },
+      () => this.runtime.rename(runId, member.dispatchId, label)); }
     catch (error) { result = { state: 'unconfirmed', error: error.message }; }
-    const presentation = { ...result, label, dispatchId: member.dispatchId };
+    const presentation = { ...result, label, dispatchId: member.dispatchId, observedAt: new Date().toISOString() };
     transaction(db => {
       const current = getRun(db, this.session, runId).members[memberId];
       if (current.dispatchId === member.dispatchId) current.presentation = presentation;
@@ -904,7 +1014,9 @@ export class Workflow {
     }, { active: kind !== 'report', capacity: true, preflight: prepared =>
       preflightNative(sendArgs(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId)) });
     let receipt;
-    try { receipt = this.runtime.send(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId); }
+    try { receipt = nativeWithReceipt({ kind: 'message', session: this.session, runId, operationId: prepared.record.id,
+      requestId: prepared.record.requestId, previousResult: prepared.previousResult },
+      () => this.runtime.send(runId, prepared.target.dispatchId, prepared.record.body, prepared.record.requestId)); }
     catch (error) {
       const ownerRequired = !forwardId && ownerRelayRequired(error);
       const refused = !ownerRequired && error.receipt?.ok === false && error.receipt.error?.data?.effectsApplied === false && error.receipt.error.data.spawn?.processStarted === false;
@@ -1092,7 +1204,8 @@ export class Workflow {
         else if (submitted.has(target.dispatchId)) refuse('本程序已對此 Dispatch 送過一次 CR；不再送出');
         else {
           submitted.add(target.dispatchId);
-          try { row.unstick = this.runtime.submitDraft(runId, target.dispatchId, evidence.draft); }
+          try { row.unstick = nativeWithReceipt({ kind: 'draft', session: this.session, runId, memberId: target.memberId, dispatchId: target.dispatchId },
+            () => this.runtime.submitDraft(runId, target.dispatchId, evidence.draft)); }
           catch (error) { row.unstick = { sent: false, error: error.message }; }
         }
       }
@@ -1102,10 +1215,15 @@ export class Workflow {
   sync(runId) {
     this.settle(runId);
     const stops = this.drainStops(runId);
-    const presentations = Object.values(this.run(runId).members).filter(member => member.dispatchId).map(member => this.present(runId, member.id));
+    const snapshot = this.run(runId);
+    const presentations = Object.values(snapshot.members).filter(member => member.dispatchId).map(member =>
+      member.presentation?.state === 'applied' && member.presentation.dispatchId === member.dispatchId && member.presentation.label === memberSummary(snapshot, member).label
+        ? member.presentation : this.present(runId, member.id));
     return { ...this.show(runId), stops, presentations };
   }
   drainStops(runId) {
+    if (!Object.values(this.run(runId).operations).some(op => op.stopRequested && op.state !== 'settled' && op.dispatchId &&
+        (!op.stopAttempt || op.stopAttempt.code === 'dispatch_inactive' && op.stopAttempt.nativeState !== (op.native?.state || op.native?.status || 'unobserved') && ['ready', 'start_unknown'].includes(op.native?.state || op.native?.status)))) return [];
     const pending = transaction(db => {
       const run = getRun(db, this.session, runId), ready = [];
       for (const op of Object.values(run.operations)) {
@@ -1119,7 +1237,8 @@ export class Workflow {
     });
     return pending.map(entry => {
       let receipt, error;
-      try { receipt = this.runtime.stop(entry.dispatchId, entry.requestId); } catch (failure) { error = failure; }
+      try { receipt = nativeWithReceipt({ kind: 'stop', session: this.session, runId, operationId: entry.operationId, requestId: entry.requestId },
+        () => this.runtime.stop(entry.dispatchId, entry.requestId)); } catch (failure) { error = failure; }
       return transaction(db => {
         const op = getRun(db, this.session, runId).operations[entry.operationId];
         op.stopAttempt.state = error ? 'unconfirmed' : 'accepted';
