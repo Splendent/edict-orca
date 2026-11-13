@@ -364,7 +364,7 @@ function claim(db, candidate, ignoreMember, evidence) {
   if (conflicts.length) fail(`與在途工作的檔案或工具範圍衝突：${conflicts.slice(0, 3).join('；')}${conflicts.length > 3 ? `；另有 ${conflicts.length - 3} 項` : ''}。若無實際重疊，改宣告較窄的 reads／writes 或不同的資源名稱／工作樹`);
 }
 function requiredOperations(run, item) {
-  return Object.values(run.operations).filter(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && !x.supersededBy && !['owner-required', 'forwarded'].includes(x.state) && !(x.operationKind === 'continuation' && x.state === 'refused' && x.rawReceipt?.error?.data?.effectsApplied === false));
+  return Object.values(run.operations).filter(x => x.work === item.id && x.generation === item.generation && x.revision === item.revision && x.position === 'executor' && x.phase === 'implementation' && !x.supersededBy && !['owner-required', 'forwarded'].includes(x.state) && !(x.operationKind === 'continuation' && x.state === 'refused' && (x.effectsApplied === false || x.rawReceipt?.error?.data?.effectsApplied === false)));
 }
 function deliveryComplete(run, item) {
   const required = requiredOperations(run, item);
@@ -991,11 +991,23 @@ export class Workflow {
       windowsCommandLength(legacyCommand, nativeArgs(sendArgs(runId, legacyTarget, message.body, op.requestId))) > 32767;
     const refusal = transaction(db => {
       const saved = getRun(db, this.session, runId), operation = saved.operations[operationId]; operation.recovery = request;
-      if (operation.rawReceipt?.ok === false && operation.rawReceipt.error?.data?.effectsApplied === false || legacyTooLong) {
+      const record = saved.messages.find(x => x.id === operationId);
+      const raw = operation.rawReceipt, effects = raw?.error?.data?.effectsApplied;
+      // Orca's runtime_error for a missing continuation worker has no structured no-effect field.
+      // Its exact sentence is usable only with an absent request and no conflicting acceptance receipts.
+      // Keep the original raw receipt intact; effectsApplied on the operation records this recovery conclusion.
+      const textRefusal = operation.operationKind === 'continuation' && effects === undefined &&
+        raw?.error?.message?.includes('No effects were applied.');
+      const receipts = [operation.receipt, record?.receipt, raw?.result, raw?.receipt, record?.rawReceipt?.result,
+        record?.rawReceipt?.receipt, request.receipt, request.response, request.result, request.accepted, request.request?.accepted];
+      const accepted = receipts.some(Boolean) || operation.receiptHistory?.length || record?.receiptHistory?.length ||
+        [raw, record?.rawReceipt].some(receipt => receipt?.ok === true || receipt?.accepted || receipt?.dispatchId ||
+          receipt?.taskId || receipt?.messageId || receipt?.message?.id);
+      if (request.state === 'absent' && !accepted && ['submitted', 'unknown', 'refused'].includes(operation.state) &&
+          (raw?.ok === false && (effects === false || textRefusal) || legacyTooLong)) {
         operation.state = 'refused'; operation.effectsApplied = false;
         if (legacyTooLong) operation.rawReceipt = { ok: false, error: { code: 'ENAMETOOLONG', data: { effectsApplied: false, proof: 'legacy-spawn-error-and-argv-over-hard-limit' } } };
         if (operation.operationKind === 'continuation') {
-          const record = saved.messages.find(x => x.id === operationId);
           if (record) {
             record.state = 'refused'; record.effectsApplied = false; record.rawReceipt = operation.rawReceipt;
             if (record.forwardOf) saved.messages.find(x => x.id === record.forwardOf).state = 'owner-required';

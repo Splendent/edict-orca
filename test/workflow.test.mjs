@@ -403,6 +403,109 @@ for (const started of [false, true]) {
   });
 }
 
+function refusedSendFixture(t) {
+  const f = fixture(t); f.root();
+  f.runtime.rows.find(row => row.dispatchId === f.zhongshu.dispatchId).state = 'succeeded';
+  f.w.sync('run-test');
+  const raw = { ok: false, error: { code: 'runtime_error',
+    message: `Dispatch ${f.zhongshu.dispatchId} has no worker Orca started that it can continue; start a new worker with worker-start. No effects were applied. Orchestration mutation request ID: native-probe.`,
+    data: { orchestrationRequestId: 'native-probe', originalCommand: ['orca', 'orchestration', 'send'] } } };
+  let sends = 0;
+  f.runtime.send = () => { sends++; throw Object.assign(new Error(raw.error.message), { receipt: raw }); };
+  assert.throws(() => f.w.message('run-test', f.zhongshu.id, undefined, 'Continue planning'), /No effects were applied/);
+  const op = Object.values(f.w.run('run-test').operations).at(-1);
+  assert.equal(op.state, 'unknown');
+  f.runtime.request = () => ({ state: 'absent' });
+  const edit = change => {
+    const file = path.join(process.env.EDICT_HOME, 'workflow.json'), db = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const run = db.runs['run-test'];
+    change(run.operations[op.id], run.messages.find(record => record.id === op.id));
+    fs.writeFileSync(file, JSON.stringify(db));
+  };
+  return { ...f, op, raw, edit, sends: () => sends };
+}
+
+test('recover combines the native no-effects sentence with an absent request and permits head replacement', t => {
+  const f = refusedSendFixture(t);
+  assert.throws(() => f.w.replace('run-test', f.zhongshu.id, { spec: 'Continue planning' }), /仍在執行/);
+  const recovered = f.w.recover('run-test', f.op.id);
+  assert.equal(recovered.state, 'refused');
+  assert.equal(recovered.effectsApplied, false);
+  const run = f.w.run('run-test'), op = run.operations[f.op.id], message = run.messages.find(x => x.id === op.id);
+  assert.equal(op.effectsApplied, false);
+  assert.equal(message.state, 'refused');
+  assert.equal(message.effectsApplied, false);
+  assert.deepEqual(op.rawReceipt, f.raw);
+  assert.deepEqual(message.rawReceipt, f.raw);
+  assert.equal(run.members[f.zhongshu.id].retired, undefined);
+  assert.equal(f.w.recover('run-test', op.id).state, 'refused');
+  assert.equal(f.sends(), 1);
+  assert.equal(f.w.replace('run-test', f.zhongshu.id, { spec: 'Continue planning' }).confirmed, true);
+});
+
+for (const [name, request, edit, expected = 'unknown'] of [
+  ['request found without a receipt', { state: 'pending' }],
+  ['completed request with message receipt', { state: 'completed', receipt: { messageId: 'delivered' } }, null, 'message-delivered'],
+  ['pending request with accepted checkpoint', { state: 'pending', accepted: { dispatchId: 'accepted-dispatch', taskId: 'accepted-task', runId: 'run-test' } }, null, 'accepted'],
+  ['absent request with acceptance receipt', { state: 'absent', receipt: { messageId: 'delivered' } }, null, 'message-delivered'],
+  ['absent request with nested acceptance', { state: 'absent', response: { ok: true, result: { messageId: 'delivered' } } }, null, 'message-delivered'],
+  ['saved operation receipt', { state: 'absent' }, op => { op.receipt = { messageId: 'delivered' }; }, 'message-delivered'],
+  ['saved message receipt', { state: 'absent' }, (_op, message) => { message.receipt = { messageId: 'delivered' }; }],
+  ['saved accepted history', { state: 'absent' }, op => { op.receiptHistory = [{ receipt: { accepted: { messageId: 'delivered' } } }]; }],
+  ['acceptance inside raw error receipt', { state: 'absent' }, op => { op.rawReceipt.result = { accepted: { messageId: 'delivered' } }; }],
+  ['already accepted operation', { state: 'absent' }, op => { op.state = 'accepted'; }, 'accepted'],
+  ['ok true wrapper', { state: 'absent' }, op => { op.rawReceipt.ok = true; }],
+  ['no no-effects guarantee', { state: 'absent' }, op => { op.rawReceipt.error.message = 'Runtime error'; }],
+  ['incomplete no-effects sentence', { state: 'absent' }, op => { op.rawReceipt.error.message = 'No effects were applied'; }],
+  ['structured effectsApplied true contradicts text', { state: 'absent' }, op => { op.rawReceipt.error.data.effectsApplied = true; }],
+  ['structured refusal but request found', { state: 'pending' }, op => { op.rawReceipt.error.data.effectsApplied = false; }],
+]) {
+  test(`recover does not infer refusal from ${name}`, t => {
+    const f = refusedSendFixture(t);
+    if (edit) f.edit(edit);
+    f.runtime.request = () => request;
+    f.w.recover('run-test', f.op.id);
+    const op = f.w.run('run-test').operations[f.op.id];
+    assert.equal(op.state, expected);
+    assert.notEqual(op.effectsApplied, false);
+    assert.notEqual(f.w.run('run-test').messages.find(x => x.id === op.id).state, 'refused');
+    assert.equal(f.sends(), 1);
+  });
+}
+
+test('recovering a refused forwarded message restores its original owner-required state', t => {
+  const f = relayFixture(t);
+  f.runtime.send = () => { throw Object.assign(new Error('native refusal'), { receipt: { ok: false,
+    error: { code: 'runtime_error', message: 'No effects were applied.' } } }); };
+  assert.throws(() => f.w.forward('run-test', f.first.messageId), /native refusal/);
+  const forwarded = Object.values(f.w.run('run-test').operations).at(-1);
+  f.runtime.request = () => ({ state: 'absent' });
+  assert.equal(f.w.recover('run-test', forwarded.id).state, 'refused');
+  const messages = f.w.run('run-test').messages;
+  assert.equal(messages.find(x => x.id === forwarded.id).effectsApplied, false);
+  assert.equal(messages.find(x => x.id === f.first.messageId).state, 'owner-required');
+});
+
+test('a text-proven refused continuation does not become an executor delivery obligation', t => {
+  const f = fixture(t), started = f.launch();
+  const file = path.join(f.project, 'src/result.txt'); fs.writeFileSync(file, 'result');
+  f.as(started.member); f.w.result('run-test', started.operation.id, { files: [file] });
+  f.runtime.rows.find(row => row.dispatchId === started.member.dispatchId).state = 'succeeded';
+  f.root(); f.w.sync('run-test'); f.as(f.bingbu);
+  f.runtime.send = () => { throw Object.assign(new Error('native refusal'), { receipt: { ok: false,
+    error: { code: 'runtime_error', message: 'No effects were applied.' } } }); };
+  assert.throws(() => f.w.message('run-test', started.member.id, 'W-001', 'Repair', undefined, 1), /native refusal/);
+  const continuation = Object.values(f.w.run('run-test').operations).at(-1);
+  f.runtime.request = () => ({ state: 'absent' });
+  assert.equal(f.w.recover('run-test', continuation.id).state, 'refused');
+  f.as(started.member);
+  const result = f.w.result('run-test', started.operation.id, { files: [file] }).result;
+  assert.equal(result.contributions.length, 1);
+  f.as(f.xingbu);
+  f.w.review('run-test', 'W-001', { generation: 1, kind: 'artifact-acceptance', digest: result.digest,
+    verdict: 'approved', evidence: [f.proof] });
+});
+
 for (const nativeState of ['absent', 'pending']) {
   test(`legacy recovery keeps unknown with incomplete evidence or native ${nativeState}`, { skip: process.platform !== 'win32' }, t => {
     const f = fixture(t); f.as(f.zhongshu);
