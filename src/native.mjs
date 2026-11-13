@@ -110,11 +110,33 @@ export class NativeRuntime {
         dispatches.add(row.dispatchId);
         workers.push({ ...row, raw: row, state, status: row.dispatchStatus ?? row.status });
       }
-      if (!page.hasMore) return workers;
+      if (!page.hasMore) break;
       if (cursors.has(page.nextCursor)) throw new Error('原生 worker-list cursor 重複；清單未確認完整，未釋放占用');
       cursors.add(page.nextCursor);
       cursor = page.nextCursor;
     }
+    for (const row of workers) {
+      const stage = row.projection?.stage?.detail;
+      if (!['failed', 'abandoned'].includes(row.state) || !['settled', 'terminal_missing'].includes(stage) ||
+          row.projection?.liveness?.verdict === 'live' || row.projection?.liveness?.verdict === 'exited' ||
+          row.terminalState === 'released' || row.resource?.releaseState === 'released' ||
+          row.resource?.ownershipState === 'released' || !validId(row.taskId)) continue;
+      // worker-list omits observations; only a matching worker-show can prove a retained terminal is missing.
+      try {
+        const data = this.call(['orchestration', 'worker-show', '--dispatch', row.dispatchId]);
+        const d = data?.dispatch, w = data?.worker;
+        if (d?.id === row.dispatchId && d.runId === runId && validId(d.taskId) && d.taskId === row.taskId &&
+            d.hostScope?.kind === 'local' &&
+            validId(d.assigneeHandle) && d.assigneeHandle === row.agentTerminalHandle &&
+            w?.dispatchId === row.dispatchId && w.agentTerminalHandle === d.assigneeHandle &&
+            w.state === row.state && w.stage === stage && data.terminal === null &&
+            data.projection?.liveness?.verdict !== 'live' && data.observation?.status === 'missing') {
+          row.observation = data.observation;
+          row.hostScope = d.hostScope;
+        }
+      } catch { /* Keep execution unconfirmed when the native observation cannot be read. */ }
+    }
+    return workers;
   }
   dispatch(dispatchId) {
     if (!validId(dispatchId)) throw new Error('缺少有效原生 Dispatch ID');

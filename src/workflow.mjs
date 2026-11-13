@@ -56,7 +56,11 @@ const resourceSubset = (a, b) => a.every(x => b.includes('*') || b.includes(x));
 function executionSettled(row) {
   const state = row.workerState || row.state || row.status;
   if (['completed', 'succeeded', 'stopped'].includes(state)) return true;
-  return ['failed', 'abandoned'].includes(state) && (row.terminalState === 'released' || row.resource?.releaseState === 'released' || row.resource?.ownershipState === 'released' || row.projection?.liveness?.verdict === 'exited');
+  if (!['failed', 'abandoned'].includes(state) || row.projection?.liveness?.verdict === 'live') return false;
+  const stage = row.stage || row.projection?.stage?.detail;
+  const missing = row.hostScope?.kind === 'local' &&
+    (stage === 'terminal_missing' || stage === 'settled' && row.observation?.status === 'missing');
+  return missing || row.terminalState === 'released' || row.resource?.releaseState === 'released' || row.resource?.ownershipState === 'released' || row.projection?.liveness?.verdict === 'exited';
 }
 function followUpSettlements(rows, runtime, runId) {
   const id = row => row.dispatchId || row.id;
@@ -94,7 +98,7 @@ function followUpSettlements(rows, runtime, runId) {
     siblings.push(row); children.set(dispatch.followUpOf, siblings);
   }
   const settled = (row, seen) => {
-    if (seen.has(id(row))) return false;
+    if (seen.has(id(row)) || ['failed', 'abandoned'].includes(state(row)) && row.projection?.liveness?.verdict === 'live') return false;
     const next = new Set([...seen, id(row)]), followUps = children.get(id(row)) || [];
     if (followUps.length && !followUps.every(child => settled(child, next))) return false;
     return executionSettled(row) || released(row) ||
