@@ -231,6 +231,8 @@ edict delegate bingbu --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --work
 
 保存回傳 `operation.id`；執行代理應從前言及 work show 核對自己的委派。
 
+delegate 的 spec 須寫明執行代理可自行決定的事項，例如核可方案與既定標準範圍內的實作細節、命名、測試方式與檔案內部結構，執行代理據此直接完成，不逐項回問。原生 ask 只用於需要授權（超出 writes、resources 或核可方案）或需求取捨（需求互相衝突、驗收條件無法同時滿足）的情況；其餘疑問依 spec 與方案自行判斷，並在成果報告中說明所做的決定。
+
 尚書依方案分工表把子工作交給對應部門，部門頭領為每個標示「可並行」的子工作各 `delegate` 一位 executor，同一輪全部送出後再結束當輪，不等前一位完成才派下一位；每份委派的 title、reads、writes 取自分工表該列。「需排隊」的子工作在其相依完成或衝突解除後再派。工具因名額已滿拒絕時，等在途 executor 結束後派下一批，不把剩餘子工作併給已在執行的 executor。planning 只屬中書 executor；plan-review／verification 屬門下；coordination 屬尚書；部門 executor 使用 implementation 或 verification。verification 及管理角色沒有專案寫入授權；中書、門下與尚書不能用 implementation 冒充交付。
 
 ## 成員換手（team replace）
@@ -264,6 +266,8 @@ edict work result --session "$EDICT_SESSION_ID" --run "$EDICT_RUN_ID" --operatio
 ```
 
 files 必須是可讀取的實際檔案，位於該委派 writes 或 `EDICT_HOME/artifacts/<operationId>/`。工具核對檔案摘要並彙整同世代、同方案的必要實作貢獻；回傳的 `result.digest` 是整體成果摘要。operation 綁定原世代，JSON 的 generation 不能改派到新工作。審查者和頭領不得用自己的報告取代 implementation 交付。
+
+成果與驗收的證據是 git diff、測試輸出與檔案路徑。`work result` 會對 files 每個檔案自動計算 SHA-256 摘要並產生整體 `result.digest`；`review record` 同樣自動計算 evidence 檔案摘要，核可與結案時重新比對摘要，檔案變更即失效。因此執行代理、刑部及其他審查者不得手動計算 SHA、位元組數或建立雜湊鏈，也不得為交接另建私交副本；直接引用工作樹內的實際檔案路徑、diff 與測試輸出，報告檔放在委派 writes 或 `EDICT_HOME/artifacts/<operationId>/`。
 
 執行代理提交後依 Orca 前言回報 worker_done。收到結束事件由有權成員 `sync`，確認所有必要 implementation 都已成功結束、每份都有成果、沒有未知副作用。刑部頭領可直接查證，或委派刑部 verification executor 分工；verification 只保存審查證據並記錄驗收，不用 work result 冒充交付。
 

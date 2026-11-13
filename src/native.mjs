@@ -2,6 +2,12 @@ import { orcaCommand, runOrca, preflightOrca } from './orca.mjs';
 import path from 'node:path';
 
 const validId = value => typeof value === 'string' && value.trim().length > 0;
+// Selection, approval and confirmation prompts where a bare Enter would choose an option. Matches only block a CR.
+const MENU_PATTERNS = [
+  /Update available/i, /Press enter to (continue|confirm|select)/i, /^\s*[›❯▶]\s*\d+[.)]\s+\S/u,
+  /\((y\/n|Y\/n|y\/N)\)|\[(y\/n|Y\/n|y\/N)\]/, /Do you trust/i, /Would you like to (run|make|apply|allow|proceed)/i,
+];
+const CONNECTION_CODES = ['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOENT'];
 const hasHandle = (value, handle) => value && typeof value === 'object' &&
   (value.handle === handle || Object.values(value).some(child => hasHandle(child, handle)));
 
@@ -29,14 +35,20 @@ export class NativeRuntime {
     return data.worktree.path;
   }
   call(args, input) {
-    const result = runOrca(orcaCommand(), nativeArgs(args), input === undefined ? {} : { input });
+    let result;
+    // nativeFailure marks failures to reach Orca (spawn failure, unparsable response, or a refused/unavailable
+    // connection code), so a polling caller can retry them. A semantic ok:false refusal (for example an ended Run)
+    // and argv preflight are not marked.
+    try { result = runOrca(orcaCommand(), nativeArgs(args), input === undefined ? {} : { input }); }
+    catch (error) { if (error?.code !== 'EDICT_ARGV_TOO_LONG') error.nativeFailure = true; throw error; }
     let value;
     try { value = JSON.parse(result.stdout); }
-    catch { throw new Error(`Orca 回應無法解析；結果未確認，不得重送：${result.stderr || result.stdout}`); }
+    catch { throw Object.assign(new Error(`Orca 回應無法解析；結果未確認，不得重送：${result.stderr || result.stdout}`), { nativeFailure: true }); }
     if (result.status !== 0 || !value.ok) {
       const error = new Error(`Orca ${args.slice(0, 2).join(' ')} 失敗或未確認：${value.error?.message || result.stderr || JSON.stringify(value)}`);
       error.receipt = value;
       error.code = value.error?.code;
+      if (CONNECTION_CODES.includes(error.code) || /unavailable|unreachable|refused/i.test(error.code ?? '')) error.nativeFailure = true;
       throw error;
     }
     return value.result;
@@ -145,6 +157,42 @@ export class NativeRuntime {
     if (data.terminalResource?.releaseState === 'released' || data.terminalResource?.ownershipState === 'released') return { ended: true, reason: 'terminal-released' };
     if (['completed', 'succeeded', 'stopped'].includes(w.state) && w.stage === 'settled') return { ended: true, reason: 'execution-settled' };
     return { ended: false, reason: 'execution-unconfirmed' };
+  }
+  // Read-only stall evidence: a dispatch prompt held unsent in the agent composer (Orca reports it as the UI-only
+  // `draft` field of terminal read), the Codex "Update available" startup prompt, and any other selection or
+  // approval prompt visible on the rendered screen (Enter there would pick a default option).
+  stallEvidence(runId, dispatchId) {
+    const data = this.call(['orchestration', 'worker-show', '--dispatch', dispatchId]);
+    const d = data?.dispatch, w = data?.worker;
+    if (d?.id !== dispatchId || d.runId !== runId || !validId(d.assigneeHandle) || w?.dispatchId !== d.id || w.agentTerminalHandle !== d.assigneeHandle) {
+      throw new Error('原生 Dispatch、Run 或代理終端身分未確認；未讀取終端');
+    }
+    const handle = d.assigneeHandle;
+    const terminal = this.call(['terminal', 'read', '--terminal', handle, '--limit', '40'])?.terminal;
+    if (terminal?.handle !== handle) throw new Error('終端讀取結果的 handle 與 Dispatch 不符');
+    const screen = this.call(['terminal', 'read', '--terminal', handle, '--screen'])?.terminal;
+    if (screen?.handle !== handle) throw new Error('終端畫面讀取結果的 handle 與 Dispatch 不符');
+    const lines = value => Array.isArray(value?.tail) ? value.tail.filter(line => typeof line === 'string') : [];
+    const visible = [...lines(terminal), ...lines(screen)];
+    return {
+      handle, state: w.state ?? null, stage: w.stage ?? null, liveness: data.projection?.liveness?.verdict ?? null,
+      // Absent means Orca did not look; only a non-null value proves a human-only wait.
+      agentWait: data.observation?.agentWait ?? null,
+      terminalStatus: terminal.status ?? null, screenSource: screen.source ?? null,
+      draft: typeof terminal.draft === 'string' && terminal.draft.trim() ? terminal.draft : null,
+      updatePrompt: visible.some(line => /Update available/i.test(line)),
+      menu: lines(screen).find(line => MENU_PATTERNS.some(pattern => pattern.test(line))) ?? null,
+    };
+  }
+  // Re-reads the terminal immediately before sending and sends a bare CR only when the same draft is still held, the
+  // worker is live, and no update, selection or approval prompt is visible. The prompt text is never sent again.
+  submitDraft(runId, dispatchId, expectedDraft) {
+    const now = this.stallEvidence(runId, dispatchId);
+    if (now.liveness !== 'live') throw new Error(`送出前 liveness=${now.liveness}；未送出`);
+    if (now.draft !== expectedDraft) throw new Error('送出前輸入框內容已改變；未送出');
+    if (now.updatePrompt || now.menu || now.agentWait) throw new Error('送出前畫面有更新、選單或待人工回應的提示；未送出');
+    this.call(['terminal', 'send', '--terminal', now.handle, '--text', '\r']);
+    return { sent: true, handle: now.handle };
   }
   start(runId, settings, spec, options, requestId) {
     const args = startArgs(runId, settings, options, requestId);
