@@ -99,3 +99,88 @@ test('an unresolved descendant identity keeps the directory unknown',t=>{
   });
   assert.equal(geometry(f.root,['inputs']).unknown,true);
 });
+
+test('whole-root claims serialize compactly without losing ordinary and future descendants',t=>{
+  const f=fixture(t);
+  for(let i=0;i<2100;i++)f.file(`inputs/file-${i}.txt`);
+  const expanded=geometry(path.join(f.root,'inputs'),['.']);
+  const compact=JSON.parse(JSON.stringify(geometry(path.join(f.root,'inputs'),['*'])));
+  assert.ok(Buffer.byteLength(JSON.stringify(compact))<Buffer.byteLength(JSON.stringify(expanded))/5);
+  assert.equal(compact.ranges.length,1);
+  assert.equal(compact.unknown,false);
+  assert.equal(rangeOverlap(compact,geometry(f.root,['inputs/new/deep/file.txt'])),true);
+  assert.equal(rangeOverlap(compact,geometry(f.root,['outside/file.txt'])),false);
+});
+
+test('serialized compact wildcards detect incoming hard links in either comparison direction',t=>{
+  const f=fixture(t),original=f.file('inputs/a.txt');
+  f.file('outside/unrelated.txt');fs.linkSync(original,path.join(f.root,'outside/hard.txt'));
+  const compact=JSON.parse(JSON.stringify(geometry(path.join(f.root,'inputs'),['*'])));
+  const legacy=JSON.parse(JSON.stringify(geometry(f.root,['outside/hard.txt'])));
+  assert.equal(rangeOverlap(compact,legacy),true);
+  assert.equal(rangeOverlap(legacy,compact),true);
+  // Existing directory claims store only descendant identities, without their parent routes.
+  assert.equal(rangeOverlap(compact,geometry(f.root,['outside'])),true);
+  assert.equal(rangeOverlap(compact,geometry(f.root,['outside/unrelated.txt'])),false);
+});
+
+test('two compact wildcard roots detect a shared hard-linked identity',t=>{
+  const f=fixture(t),original=f.file('a/source.txt');
+  f.file('b/unrelated.txt');f.file('c/unrelated.txt');
+  fs.linkSync(original,path.join(f.root,'b/shared.txt'));
+  const a=JSON.parse(JSON.stringify(geometry(path.join(f.root,'a'),['*'])));
+  const b=JSON.parse(JSON.stringify(geometry(path.join(f.root,'b'),['*'])));
+  const c=JSON.parse(JSON.stringify(geometry(path.join(f.root,'c'),['*'])));
+  assert.equal(rangeOverlap(a,b),true);
+  assert.equal(rangeOverlap(b,a),true);
+  assert.equal(rangeOverlap(a,c),false);
+});
+
+test('compact wildcard routes retain incoming junction aliases and escaping junction targets',t=>{
+  const f=fixture(t);f.file('inputs/file.txt');f.file('outside/file.txt');
+  const type=process.platform==='win32'?'junction':'dir';
+  fs.symlinkSync(path.join(f.root,'inputs'),path.join(f.root,'incoming'),type);
+  fs.symlinkSync(path.join(f.root,'outside'),path.join(f.root,'inputs/escape'),type);
+  const compact=JSON.parse(JSON.stringify(geometry(path.join(f.root,'inputs'),['*'])));
+  for(const name of ['incoming/file.txt','incoming/future.txt','outside/file.txt','outside/future.txt']) {
+    const other=geometry(f.root,[name]);
+    assert.equal(rangeOverlap(compact,other),true);
+    assert.equal(rangeOverlap(other,compact),true);
+  }
+  assert.equal(rangeOverlap(compact,geometry(f.root,['independent/future.txt'])),false);
+});
+
+test('merging serialized compact and explicit roots retains each alias identity set',t=>{
+  const f=fixture(t),a=f.file('a/source.txt'),b=f.file('b/source.txt');
+  f.file('extra/read.txt');fs.mkdirSync(path.join(f.root,'outside'));
+  fs.linkSync(a,path.join(f.root,'outside/a.txt'));fs.linkSync(b,path.join(f.root,'outside/b.txt'));
+  const merged=JSON.parse(JSON.stringify(mergeGeometry(geometry(path.join(f.root,'a'),['*']),
+    geometry(path.join(f.root,'b'),['*']),geometry(f.root,['extra/read.txt']))));
+  for(const name of ['outside/a.txt','outside/b.txt','extra/read.txt']) {
+    assert.equal(rangeOverlap(merged,geometry(f.root,[name])),true);
+  }
+  assert.equal(rangeOverlap(merged,geometry(f.root,['unrelated/new.txt'])),false);
+});
+
+test('unreadable whole-root scans remain unknown and omit unproven compact identities',t=>{
+  const f=fixture(t);f.file('inputs/nested/a.txt');
+  const readdir=fs.readdirSync;
+  t.mock.method(fs,'readdirSync',(directory,...args)=>{
+    if(directory===path.join(f.root,'inputs/nested'))throw Object.assign(new Error('denied'),{code:'EACCES'});
+    return readdir(directory,...args);
+  });
+  const compact=geometry(path.join(f.root,'inputs'),['*']);
+  assert.equal(compact.unknown,true);
+  assert.equal(rangeOverlap(compact,geometry(f.root,['outside/file.txt'])),true);
+});
+
+for(const inodeSets of [{},[{dev:'1',deltas:'not base64!'}],[{dev:'1',deltas:'eA=='}]]) {
+  test(`unparseable compact identities conservatively overlap: ${JSON.stringify(inodeSets)}`,t=>{
+    const f=fixture(t);f.file('inputs/source.txt');
+    const compact={...geometry(path.join(f.root,'inputs'),['*']),inodeSets};
+    const other=geometry(f.root,['outside/new.txt']);
+    assert.equal(rangeOverlap(compact,other),true);
+    assert.equal(rangeOverlap(other,compact),true);
+    assert.equal(rangeOverlap(mergeGeometry(compact),other),true);
+  });
+}
