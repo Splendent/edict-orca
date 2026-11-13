@@ -1003,8 +1003,10 @@ export class Workflow {
       const accepted = receipts.some(Boolean) || operation.receiptHistory?.length || record?.receiptHistory?.length ||
         [raw, record?.rawReceipt].some(receipt => receipt?.ok === true || receipt?.accepted || receipt?.dispatchId ||
           receipt?.taskId || receipt?.messageId || receipt?.message?.id);
-      if (request.state === 'absent' && !accepted && ['submitted', 'unknown', 'refused'].includes(operation.state) &&
-          (raw?.ok === false && (effects === false || textRefusal) || legacyTooLong)) {
+      const textProven = raw?.ok === false && textRefusal && request.state === 'absent' && !accepted &&
+        ['submitted', 'unknown', 'refused'].includes(operation.state);
+      // Structured no-effect proof retains its native semantics regardless of request lookup state.
+      if (raw?.ok === false && effects === false || textProven || legacyTooLong) {
         operation.state = 'refused'; operation.effectsApplied = false;
         if (legacyTooLong) operation.rawReceipt = { ok: false, error: { code: 'ENAMETOOLONG', data: { effectsApplied: false, proof: 'legacy-spawn-error-and-argv-over-hard-limit' } } };
         if (operation.operationKind === 'continuation') {

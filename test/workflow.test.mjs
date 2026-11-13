@@ -444,7 +444,7 @@ test('recover combines the native no-effects sentence with an absent request and
 });
 
 for (const [name, request, edit, expected = 'unknown'] of [
-  ['request found without a receipt', { state: 'pending' }],
+  ['text-only refusal with request found without a receipt', { state: 'pending' }],
   ['completed request with message receipt', { state: 'completed', receipt: { messageId: 'delivered' } }, null, 'message-delivered'],
   ['pending request with accepted checkpoint', { state: 'pending', accepted: { dispatchId: 'accepted-dispatch', taskId: 'accepted-task', runId: 'run-test' } }, null, 'accepted'],
   ['absent request with acceptance receipt', { state: 'absent', receipt: { messageId: 'delivered' } }, null, 'message-delivered'],
@@ -458,7 +458,6 @@ for (const [name, request, edit, expected = 'unknown'] of [
   ['no no-effects guarantee', { state: 'absent' }, op => { op.rawReceipt.error.message = 'Runtime error'; }],
   ['incomplete no-effects sentence', { state: 'absent' }, op => { op.rawReceipt.error.message = 'No effects were applied'; }],
   ['structured effectsApplied true contradicts text', { state: 'absent' }, op => { op.rawReceipt.error.data.effectsApplied = true; }],
-  ['structured refusal but request found', { state: 'pending' }, op => { op.rawReceipt.error.data.effectsApplied = false; }],
 ]) {
   test(`recover does not infer refusal from ${name}`, t => {
     const f = refusedSendFixture(t);
@@ -469,6 +468,24 @@ for (const [name, request, edit, expected = 'unknown'] of [
     assert.equal(op.state, expected);
     assert.notEqual(op.effectsApplied, false);
     assert.notEqual(f.w.run('run-test').messages.find(x => x.id === op.id).state, 'refused');
+    assert.equal(f.sends(), 1);
+  });
+}
+
+for (const state of ['pending', 'completed']) {
+  test(`structured no-effects proof remains refused when request lookup is ${state}`, t => {
+    const f = refusedSendFixture(t);
+    f.edit(op => {
+      op.rawReceipt.error.data.effectsApplied = false;
+      op.rawReceipt.error.message = 'Structured refusal';
+    });
+    f.runtime.request = () => ({ state, receipt: { messageId: 'native-receipt' } });
+    const result = f.w.recover('run-test', f.op.id);
+    assert.equal(result.state, 'refused');
+    assert.equal(result.effectsApplied, false);
+    const run = f.w.run('run-test');
+    assert.equal(run.operations[f.op.id].state, 'refused');
+    assert.equal(run.messages.find(message => message.id === f.op.id).state, 'refused');
     assert.equal(f.sends(), 1);
   });
 }
